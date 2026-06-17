@@ -1,3 +1,4 @@
+pub mod dispatch;
 pub mod error;
 pub mod http;
 pub mod manager;
@@ -13,4 +14,4 @@ pub mod writer;
 pub mod test_server;
 
 pub use error::{DownloadError, DownloadResult};
-pub use manager::DownloadManager;
+pub use manager::{DownloadManager, DownloadOptions, DownloadOutcome};
