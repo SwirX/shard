@@ -9,6 +9,7 @@ authors = ["SwirX <swirxytb@gmail.com>"]
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time", "process", "signal"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "default-tls"] }
+futures-util = "0.3"
 http = "1"
 url = "2"
 serde = { version = "1", features = ["derive"] }
