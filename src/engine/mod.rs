@@ -13,5 +13,8 @@ pub mod writer;
 #[cfg(test)]
 pub mod test_server;
 
+#[cfg(test)]
+mod tests_pool;
+
 pub use error::{DownloadError, DownloadResult};
 pub use manager::{DownloadManager, DownloadOptions, DownloadOutcome};
