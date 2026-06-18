@@ -114,7 +114,7 @@ match self.download_chunk(&chunk, index).await {
                 self.queue.record_progress(index, written);
             }
             if let Some(tx) = &self.progress_tx {
-                let _ = tx.send(ProgressEvent::ChunkAdvanced { index, written }).await;
+                let _ = tx.try_send(ProgressEvent::ChunkAdvanced { index, written });
             }
         }
         if !buffer.is_empty() {
@@ -126,7 +126,7 @@ match self.download_chunk(&chunk, index).await {
         }
         self.queue.record_progress(index, written);
         if let Some(tx) = &self.progress_tx {
-            let _ = tx.send(ProgressEvent::ChunkComplete { index }).await;
+            let _ = tx.try_send(ProgressEvent::ChunkComplete { index });
         }
         Ok(())
     }
