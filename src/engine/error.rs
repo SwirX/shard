@@ -10,6 +10,8 @@ pub enum DownloadError {
     InvalidArgument(String),
     #[error("remote does not support byte ranges")]
     RangeUnsupported,
+    #[error("{0} chunks failed after exhausting retry attempts")]
+    ChunksFailed(usize),
 }
 
 pub type DownloadResult<T> = Result<T, DownloadError>;
