@@ -45,9 +45,9 @@ impl WorkerPool {
     pub async fn run(self) -> DownloadResult<()> {
         let pool = Arc::new(self);
         let mut handles = Vec::with_capacity(pool.connections);
-        for _ in 0..pool.connections {
+        for worker_id in 0..pool.connections {
             let worker = Arc::clone(&pool);
-            handles.push(tokio::spawn(async move { worker.run_worker().await }));
+            handles.push(tokio::spawn(async move { worker.run_worker(worker_id).await }));
         }
         for handle in handles {
             handle
@@ -60,24 +60,24 @@ impl WorkerPool {
         Ok(())
     }
 
-    async fn run_worker(self: &Arc<Self>) {
+    async fn run_worker(self: &Arc<Self>, worker_id: usize) {
         loop {
             let index = match self.queue.take().await {
                 Some(index) => index,
                 None => break,
             };
-            self.work_chunk(index).await;
+            self.work_chunk(worker_id, index).await;
         }
     }
 
-    async fn work_chunk(self: &Arc<Self>, index: usize) {
+    async fn work_chunk(self: &Arc<Self>, worker_id: usize, index: usize) {
         if let Some(tx) = &self.progress_tx {
-            let _ = tx.try_send(ProgressEvent::ChunkStarted { index });
+            let _ = tx.try_send(ProgressEvent::ChunkStarted { worker: worker_id, index });
         }
         let attempts = self.queue.attempt(index);
         self.queue.reset_progress(index);
         let chunk = self.queue.chunk(index).clone();
-match self.download_chunk(&chunk, index).await {
+        match self.download_chunk(&chunk, index, worker_id).await {
             Ok(()) => self.queue.settle_complete(index),
             Err(_) if attempts < self.max_attempts as u64 => self.queue.requeue(index).await,
             Err(_) => self.queue.settle_failed(index),
@@ -88,6 +88,7 @@ match self.download_chunk(&chunk, index).await {
         self: &Arc<Self>,
         chunk: &super::planner::Chunk,
         index: usize,
+        worker_id: usize,
     ) -> DownloadResult<()> {
         let start = chunk.start;
         let end = chunk.end;
@@ -117,7 +118,11 @@ match self.download_chunk(&chunk, index).await {
                 self.queue.record_progress(index, written);
             }
             if let Some(tx) = &self.progress_tx {
-                let _ = tx.try_send(ProgressEvent::ChunkAdvanced { index, written });
+                let _ = tx.try_send(ProgressEvent::ChunkAdvanced {
+                    worker: worker_id,
+                    index,
+                    written,
+                });
             }
         }
         if !buffer.is_empty() {
@@ -129,7 +134,10 @@ match self.download_chunk(&chunk, index).await {
         }
         self.queue.record_progress(index, written);
         if let Some(tx) = &self.progress_tx {
-            let _ = tx.try_send(ProgressEvent::ChunkComplete { index });
+            let _ = tx.try_send(ProgressEvent::ChunkComplete {
+                worker: worker_id,
+                index,
+            });
         }
         Ok(())
     }
