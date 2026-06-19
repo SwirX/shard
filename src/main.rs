@@ -1,6 +1,11 @@
 use clap::{Parser, Subcommand};
 use shard::engine::{DownloadManager, DownloadOptions};
 use std::path::PathBuf;
+use tokio::sync::mpsc;
+
+mod cli;
+
+use cli::progress::run_progress_renderer;
 
 #[derive(Parser)]
 #[command(name = "shard", version, about = "Native concurrent HTTP range download engine")]
@@ -37,7 +42,9 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let dest_path = output.unwrap_or_else(|| derive_output_path(&url));
             let manager = DownloadManager::new()?;
-            let outcome = manager
+            let (progress_tx, progress_rx) = mpsc::channel(1024);
+            let renderer = tokio::spawn(run_progress_renderer(progress_rx));
+            let result = manager
                 .download(
                     &DownloadOptions {
                         url,
@@ -46,9 +53,11 @@ async fn main() -> anyhow::Result<()> {
                         connections,
                         max_attempts,
                     },
-                    None,
+                    Some(progress_tx),
                 )
-                .await?;
+                .await;
+            let _ = renderer.await;
+            let outcome = result?;
             println!("saved {} bytes -> {}", outcome.size, dest_path.display());
             println!("sha256 {}", outcome.sha256);
         }

@@ -44,6 +44,9 @@ impl DownloadManager {
         progress_tx: Option<mpsc::Sender<ProgressEvent>>,
     ) -> DownloadResult<DownloadOutcome> {
         let metadata = Arc::new(self.resolver.resolve(&options.url).await?);
+        if let Some(tx) = &progress_tx {
+            let _ = tx.try_send(ProgressEvent::Start { total: metadata.size });
+        }
         let plan = Arc::new(ChunkPlan::build(metadata.size, options.chunk_size));
         let writer = Arc::new(PositionalWriter::open(&options.dest_path)?);
         writer.preallocate(metadata.size)?;

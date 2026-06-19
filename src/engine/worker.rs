@@ -71,6 +71,9 @@ impl WorkerPool {
     }
 
     async fn work_chunk(self: &Arc<Self>, index: usize) {
+        if let Some(tx) = &self.progress_tx {
+            let _ = tx.try_send(ProgressEvent::ChunkStarted { index });
+        }
         let attempts = self.queue.attempt(index);
         self.queue.reset_progress(index);
         let chunk = self.queue.chunk(index).clone();

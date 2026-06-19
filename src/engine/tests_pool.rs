@@ -118,6 +118,68 @@ async fn attempt_exhaustion_fails_deterministically() {
     }
 }
 
+#[tokio::test]
+async fn progress_reports_total_clients_and_completion_order() {
+    let body = deterministic_body(128 * 1024, 5);
+    let expected_total = body.len() as u64;
+    let server = TestServer::spawn(body).await;
+    let dest = scratch_path("progress-events.bin");
+    let (tx, mut rx) = mpsc::channel::<ProgressEvent>(64);
+    let manager = DownloadManager::new().unwrap();
+    manager
+        .download(
+            &DownloadOptions {
+                url: server.url(),
+                dest_path: dest.clone(),
+                chunk_size: 64 * 1024,
+                connections: 2,
+                max_attempts: 3,
+            },
+            Some(tx),
+        )
+        .await
+        .unwrap();
+
+    let mut log = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        log.push(event);
+    }
+    let total = log
+        .iter()
+        .find_map(|event| match event {
+            ProgressEvent::Start { total } => Some(*total),
+            _ => None,
+        })
+        .expect("Start event must precede all chunk events");
+    assert_eq!(total, expected_total);
+    let mut first_start: HashMap<usize, usize> = HashMap::new();
+    let mut last_complete: HashMap<usize, usize> = HashMap::new();
+    for (position, event) in log.iter().enumerate() {
+        match event {
+            ProgressEvent::ChunkStarted { index } => {
+                first_start.entry(*index).or_insert(position);
+            }
+            ProgressEvent::ChunkComplete { index } => {
+                last_complete.insert(*index, position);
+            }
+            _ => {}
+        }
+    }
+    let mut started_ids: Vec<usize> = first_start.keys().copied().collect();
+    started_ids.sort();
+    assert_eq!(started_ids, vec![0, 1]);
+    let mut completed_ids: Vec<usize> = last_complete.keys().copied().collect();
+    completed_ids.sort();
+    assert_eq!(completed_ids, vec![0, 1]);
+    for index in [0usize, 1] {
+        assert!(
+            first_start[&index] < last_complete[&index],
+            "chunk {index} must be reported started before complete"
+        );
+    }
+    let _ = std::fs::remove_file(&dest);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[ignore = "run manually: cargo test --release -- --ignored --nocapture throughput_benchmark"]
 async fn throughput_benchmark() {
