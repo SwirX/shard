@@ -87,27 +87,7 @@ fn hash_file(path: &Path) -> DownloadResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::test_server::TestServer;
-    use sha2::Digest as _;
-
-    pub fn deterministic_body(size: usize, seed: u64) -> Vec<u8> {
-        let mut state = seed;
-        (0..size)
-            .map(|_| {
-                state ^= state << 13;
-                state ^= state >> 7;
-                state ^= state << 17;
-                (state & 0xff) as u8
-            })
-            .collect()
-    }
-
-    pub fn expected_sha256(body: &[u8]) -> String {
-        let mut hasher = sha2::Sha256::new();
-        hasher.update(body);
-        let output = hasher.finalize();
-        output.iter().map(|b| format!("{:02x}", b)).collect()
-    }
+    use crate::engine::test_server::{expected_sha256, deterministic_body, TestServer};
 
     #[tokio::test]
     async fn downloads_multiple_chunks_byte_for_byte() {
