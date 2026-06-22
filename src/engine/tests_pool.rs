@@ -19,7 +19,7 @@ async fn collect_progress(body: Vec<u8>, features: ServerFeatures) -> (Vec<usize
     let collector = tokio::spawn(async move {
         let mut completions = Vec::new();
         while let Some(event) = rx.recv().await {
-            if let ProgressEvent::ChunkComplete { index } = event {
+            if let ProgressEvent::ChunkComplete { index, .. } = event {
                 completions.push(index);
             }
         }
@@ -154,17 +154,29 @@ async fn progress_reports_total_clients_and_completion_order() {
     assert_eq!(total, expected_total);
     let mut first_start: HashMap<usize, usize> = HashMap::new();
     let mut last_complete: HashMap<usize, usize> = HashMap::new();
+    let mut reporting_workers: Vec<usize> = Vec::new();
     for (position, event) in log.iter().enumerate() {
         match event {
-            ProgressEvent::ChunkStarted { index } => {
+            ProgressEvent::ChunkStarted { worker, index } => {
                 first_start.entry(*index).or_insert(position);
+                reporting_workers.push(*worker);
             }
-            ProgressEvent::ChunkComplete { index } => {
+            ProgressEvent::ChunkComplete { worker, index } => {
                 last_complete.insert(*index, position);
+                reporting_workers.push(*worker);
             }
             _ => {}
         }
     }
+    assert!(
+        reporting_workers.iter().all(|worker| *worker < 2),
+        "reported chunks must belong to one of the two spawned workers"
+    );
+    assert!(
+        reporting_workers.iter().any(|worker| *worker == 0)
+            && reporting_workers.iter().any(|worker| *worker == 1),
+        "both workers must report chunks"
+    );
     let mut started_ids: Vec<usize> = first_start.keys().copied().collect();
     started_ids.sort();
     assert_eq!(started_ids, vec![0, 1]);
