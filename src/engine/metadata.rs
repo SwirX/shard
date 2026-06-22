@@ -10,6 +10,7 @@ pub struct RemoteMetadata {
     pub etag: Option<String>,
     pub last_modified: Option<String>,
     pub accepts_ranges: bool,
+    pub content_disposition: Option<String>,
 }
 
 pub struct RemoteResolver {
@@ -32,6 +33,7 @@ impl RemoteResolver {
             last_modified: probe.last_modified,
             accepts_ranges: probe.accepts_ranges,
             final_url,
+            content_disposition: probe.content_disposition,
         })
     }
 
@@ -73,6 +75,8 @@ impl RemoteResolver {
         let status = response.status();
         let etag = header_string(response.headers(), http::header::ETAG);
         let last_modified = header_string(response.headers(), http::header::LAST_MODIFIED);
+        let content_disposition =
+            header_string(response.headers(), http::header::CONTENT_DISPOSITION);
         let mut accepts_ranges = false;
         if status == http::StatusCode::PARTIAL_CONTENT {
             accepts_ranges = response
@@ -86,6 +90,7 @@ impl RemoteResolver {
             accepts_ranges,
             etag,
             last_modified,
+            content_disposition,
         })
     }
 }
@@ -95,6 +100,7 @@ struct RangeProbe {
     accepts_ranges: bool,
     etag: Option<String>,
     last_modified: Option<String>,
+    content_disposition: Option<String>,
 }
 
 fn header_string(headers: &http::HeaderMap<HeaderValue>, name: http::header::HeaderName) -> Option<String> {

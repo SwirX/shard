@@ -17,6 +17,7 @@ pub struct ServerFeatures {
     pub fragment_bytes: Option<usize>,
     pub drop_once: Arc<Mutex<HashMap<(u64, u64), u32>>>,
     pub drop_forever: Arc<HashSet<(u64, u64)>>,
+    pub content_disposition: Option<String>,
 }
 
 impl Default for ServerFeatures {
@@ -26,11 +27,17 @@ impl Default for ServerFeatures {
             fragment_bytes: None,
             drop_once: Arc::new(Mutex::new(HashMap::new())),
             drop_forever: Arc::new(HashSet::new()),
+            content_disposition: None,
         }
     }
 }
 
-pub async fn serve(listener: TcpListener, body: Vec<u8>, etag: String, features: ServerFeatures) {
+pub async fn serve(
+    listener: TcpListener,
+    body: Vec<u8>,
+    etag: String,
+    features: ServerFeatures,
+) {
     loop {
         let (mut socket, _) = match listener.accept().await {
             Ok(pair) => pair,
@@ -90,7 +97,7 @@ async fn handle_connection(
         tokio::time::sleep(delay).await;
     }
 
-    let head_bytes = build_response_head(is_head, range, body.len(), etag);
+    let head_bytes = build_response_head(is_head, range, body.len(), etag, features.content_disposition.as_deref());
     let _ = socket.write_all(&head_bytes).await;
 
     if !is_head {
@@ -151,7 +158,13 @@ fn compute_delay(
     }
 }
 
-fn build_response_head(is_head: bool, range: Option<(usize, usize)>, body_len: usize, etag: &str) -> Vec<u8> {
+fn build_response_head(
+    is_head: bool,
+    range: Option<(usize, usize)>,
+    body_len: usize,
+    etag: &str,
+    content_disposition: Option<&str>,
+) -> Vec<u8> {
     let _ = is_head;
     let (status, content_length, content_range) = match range {
         None => ("200 OK", body_len.to_string(), None),
@@ -166,8 +179,11 @@ fn build_response_head(is_head: bool, range: Option<(usize, usize)>, body_len: u
         .as_deref()
         .map(|spec| format!("Content-Range: bytes {spec}/{body_len}\r\n"))
         .unwrap_or_default();
+    let disposition_header = content_disposition
+        .map(|value| format!("Content-Disposition: {value}\r\n"))
+        .unwrap_or_default();
     format!(
-        "HTTP/1.1 {status}\r\nContent-Length: {content_length}\r\n{range_header}Accept-Ranges: bytes\r\nETag: {etag}\r\nLast-Modified: Wed, 01 Jul 2026 12:00:00 GMT\r\nConnection: close\r\n\r\n"
+        "HTTP/1.1 {status}\r\nContent-Length: {content_length}\r\n{range_header}Accept-Ranges: bytes\r\nETag: {etag}\r\nLast-Modified: Wed, 01 Jul 2026 12:00:00 GMT\r\n{disposition_header}Connection: close\r\n\r\n"
     )
     .into_bytes()
 }
