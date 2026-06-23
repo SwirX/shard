@@ -147,7 +147,7 @@ async fn progress_reports_total_clients_and_completion_order() {
     let total = log
         .iter()
         .find_map(|event| match event {
-            ProgressEvent::Start { total } => Some(*total),
+            ProgressEvent::Start { total, .. } => Some(*total),
             _ => None,
         })
         .expect("Start event must precede all chunk events");
@@ -173,8 +173,7 @@ async fn progress_reports_total_clients_and_completion_order() {
         "reported chunks must belong to one of the two spawned workers"
     );
     assert!(
-        reporting_workers.iter().any(|worker| *worker == 0)
-            && reporting_workers.iter().any(|worker| *worker == 1),
+        reporting_workers.contains(&0) && reporting_workers.contains(&1),
         "both workers must report chunks"
     );
     let mut started_ids: Vec<usize> = first_start.keys().copied().collect();
