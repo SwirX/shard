@@ -72,6 +72,7 @@ impl Renderer {
     }
 
     pub fn finish(&mut self) {
+        self.view = View::Bar;
         self.paint_now();
     }
 
@@ -231,5 +232,17 @@ mod tests {
         renderer.handle_key(KeyCommand::ToggleView);
         let lines = renderer.compose_lines(&stats);
         assert!(lines.iter().all(|line| !line.contains("toggle view")));
+    }
+
+    #[test]
+    fn finish_switches_back_to_the_bar_view() {
+        let mut renderer = Renderer::new(
+            Style::with_color(false, crate::cli::style::ProgressMode::Plain),
+            2,
+        );
+        renderer.handle_key(KeyCommand::ToggleView);
+        assert_eq!(renderer.view, View::Workers);
+        renderer.finish();
+        assert_eq!(renderer.view, View::Bar);
     }
 }
