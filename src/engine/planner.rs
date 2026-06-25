@@ -53,6 +53,10 @@ impl ChunkPlan {
     pub fn progress(&self) -> u64 {
         self.chunks.iter().map(|chunk| chunk.downloaded).sum()
     }
+
+    pub fn from_chunks(chunks: Vec<Chunk>) -> Self {
+        Self { chunks }
+    }
 }
 
 #[cfg(test)]

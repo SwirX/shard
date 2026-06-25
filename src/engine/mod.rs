@@ -2,6 +2,7 @@ pub mod dispatch;
 pub mod error;
 pub mod http;
 pub mod manager;
+pub mod manifest;
 pub mod metadata;
 pub mod planner;
 pub mod progress;
