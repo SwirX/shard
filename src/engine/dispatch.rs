@@ -19,14 +19,27 @@ pub struct ChunkDispatcher {
 impl ChunkDispatcher {
     pub fn new(plan: Arc<ChunkPlan>) -> Self {
         let total = plan.chunks.len();
-        let pending = Mutex::new((0..total).collect::<VecDeque<_>>());
+        let mut pending = VecDeque::with_capacity(total);
+        let mut completed = Vec::with_capacity(total);
+        let mut downloaded = Vec::with_capacity(total);
+        let mut settled = 0usize;
+        for (index, chunk) in plan.chunks.iter().enumerate() {
+            let done = chunk.downloaded >= chunk.range_len();
+            downloaded.push(AtomicU64::new(chunk.downloaded));
+            completed.push(AtomicBool::new(done));
+            if done {
+                settled += 1;
+            } else {
+                pending.push_back(index);
+            }
+        }
         Self {
             plan,
-            pending,
+            pending: Mutex::new(pending),
             attempts: (0..total).map(|_| AtomicU64::new(0)).collect(),
-            downloaded: (0..total).map(|_| AtomicU64::new(0)).collect(),
-            completed: (0..total).map(|_| AtomicBool::new(false)).collect(),
-            settled: AtomicUsize::new(0),
+            downloaded,
+            completed,
+            settled: AtomicUsize::new(settled),
             failed: AtomicUsize::new(0),
             notify: Notify::new(),
         }
@@ -99,6 +112,13 @@ impl ChunkDispatcher {
     pub fn is_fully_settled(&self) -> bool {
         self.settled.load(Ordering::Acquire) == self.total()
     }
+
+    pub fn downloaded_counts(&self) -> Vec<u64> {
+        self.downloaded
+            .iter()
+            .map(|count| count.load(Ordering::Acquire))
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -137,5 +157,23 @@ mod tests {
         assert!(dispatcher.is_fully_settled());
         assert_eq!(dispatcher.completed_count(), 4);
         assert_eq!(dispatcher.failed_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn pre_completed_chunks_are_never_dispensed() {
+        use crate::engine::planner::Chunk;
+        let plan = Arc::new(ChunkPlan::from_chunks(vec![
+            Chunk { start: 0, end: 63, downloaded: 64 },
+            Chunk { start: 64, end: 127, downloaded: 0 },
+        ]));
+        let dispatcher = ChunkDispatcher::new(plan);
+        assert_eq!(dispatcher.completed_count(), 1);
+        let mut dispensed = Vec::new();
+        while let Some(index) = dispatcher.take().await {
+            dispensed.push(index);
+            dispatcher.settle_complete(index);
+        }
+        assert_eq!(dispensed, vec![1]);
+        assert_eq!(dispatcher.completed_count(), 2);
     }
 }

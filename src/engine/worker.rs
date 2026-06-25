@@ -1,7 +1,6 @@
 use super::dispatch::ChunkDispatcher;
 use super::error::{DownloadError, DownloadResult};
 use super::metadata::RemoteMetadata;
-use super::planner::ChunkPlan;
 use super::progress::ProgressEvent;
 use super::writer::PositionalWriter;
 use futures_util::StreamExt;
@@ -24,15 +23,14 @@ impl WorkerPool {
     pub fn new(
         http: HttpClient,
         metadata: Arc<RemoteMetadata>,
-        plan: Arc<ChunkPlan>,
+        dispatcher: Arc<ChunkDispatcher>,
         writer: Arc<PositionalWriter>,
         connections: usize,
         max_attempts: u32,
         progress_tx: Option<mpsc::Sender<ProgressEvent>>,
     ) -> Self {
-        let queue = Arc::new(ChunkDispatcher::new(plan));
         Self {
-            queue,
+            queue: dispatcher,
             http,
             writer,
             metadata,

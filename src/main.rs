@@ -118,6 +118,7 @@ async fn main() -> anyhow::Result<()> {
                             chunk_size,
                             connections,
                             max_attempts,
+                            ..Default::default()
                         },
                         Some(progress_tx),
                     )
@@ -145,6 +146,7 @@ async fn main() -> anyhow::Result<()> {
                             chunk_size,
                             connections,
                             max_attempts,
+                            ..Default::default()
                         },
                         Some(progress_tx),
                     )
