@@ -23,6 +23,10 @@ impl RemoteResolver {
         Ok(Self { client })
     }
 
+    pub fn with_client(client: HttpClient) -> Self {
+        Self { client }
+    }
+
     pub async fn resolve(&self, url: &str) -> DownloadResult<RemoteMetadata> {
         let final_url = self.resolve_redirects(url).await?;
         let size = self.probe_size(&final_url).await?;

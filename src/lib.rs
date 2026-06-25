@@ -1,3 +1,3 @@
 pub mod engine;
 
-pub use engine::{DownloadManager, DownloadOptions, DownloadOutcome};
+pub use engine::{Controller, DownloadHandle, DownloadManager, DownloadOptions, DownloadOutcome, OutcomeStatus};

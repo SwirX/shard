@@ -13,6 +13,7 @@ pub struct ChunkDispatcher {
     completed: Vec<AtomicBool>,
     settled: AtomicUsize,
     failed: AtomicUsize,
+    shutdown: AtomicBool,
     notify: Notify,
 }
 
@@ -41,6 +42,7 @@ impl ChunkDispatcher {
             completed,
             settled: AtomicUsize::new(settled),
             failed: AtomicUsize::new(0),
+            shutdown: AtomicBool::new(false),
             notify: Notify::new(),
         }
     }
@@ -62,12 +64,17 @@ impl ChunkDispatcher {
                 if let Some(index) = guard.pop_front() {
                     return Some(index);
                 }
-                if self.settled.load(Ordering::Acquire) == self.total() {
+                if self.shutdown.load(Ordering::Acquire) || self.settled.load(Ordering::Acquire) == self.total() {
                     return None;
                 }
             }
             notified.as_mut().await;
         }
+    }
+
+    pub fn shutdown(&self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+        self.notify.notify_waiters();
     }
 
     pub fn attempt(&self, index: usize) -> u64 {

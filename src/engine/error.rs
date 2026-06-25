@@ -14,6 +14,8 @@ pub enum DownloadError {
     RangeUnsupported,
     #[error("{0} chunks failed after exhausting retry attempts")]
     ChunksFailed(usize),
+    #[error("download cancelled by user")]
+    Canceled,
     #[error("serialization error: {0}")]
     Json(#[from] serde_json::Error),
 }

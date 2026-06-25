@@ -1,4 +1,5 @@
 use crate::engine::checkpoint::CheckpointGuard;
+use crate::engine::control::Controller;
 use crate::engine::error::{DownloadError, DownloadResult};
 use crate::engine::http::EngineHttp;
 use crate::engine::manifest::{judge_resume, remove_sidecar, Manifest, ManifestTemplate, RemoteSnapshot, ResumeVerdict};
@@ -6,13 +7,14 @@ use crate::engine::metadata::{RemoteMetadata, RemoteResolver};
 use crate::engine::planner::{Chunk, ChunkPlan};
 use crate::engine::progress::ProgressEvent;
 use crate::engine::verify::Sha256Hasher;
-use crate::engine::worker::WorkerPool;
+use crate::engine::worker::{PoolConfig, WorkerPool};
 use crate::engine::writer::{file_len, PositionalWriter};
 use reqwest::Client as HttpClient;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 #[derive(Debug, Clone)]
 pub struct DownloadOptions {
@@ -45,6 +47,7 @@ pub enum OutcomeStatus {
     Cancelled,
 }
 
+#[derive(Debug)]
 pub struct DownloadOutcome {
     pub final_url: String,
     pub size: u64,
@@ -53,17 +56,49 @@ pub struct DownloadOutcome {
     pub status: OutcomeStatus,
 }
 
+pub struct DownloadHandle {
+    pub controller: Controller,
+    task: JoinHandle<DownloadResult<DownloadOutcome>>,
+}
+
+impl DownloadHandle {
+    pub async fn wait(&mut self) -> DownloadResult<DownloadOutcome> {
+        (&mut self.task)
+            .await
+            .map_err(|join_err| DownloadError::Io(std::io::Error::other(join_err.to_string())))?
+    }
+
+    pub async fn cancel_and_wait(&mut self) -> DownloadResult<DownloadOutcome> {
+        self.controller.cancel();
+        self.wait().await
+    }
+}
+
 pub struct DownloadManager {
     client: HttpClient,
-    resolver: RemoteResolver,
 }
 
 impl DownloadManager {
     #[allow(clippy::new_without_default)]
     pub fn new() -> DownloadResult<Self> {
         let client = EngineHttp::client()?;
-        let resolver = RemoteResolver::new()?;
-        Ok(Self { client, resolver })
+        Ok(Self { client })
+    }
+
+    pub fn start(
+        &self,
+        options: &DownloadOptions,
+        progress_tx: Option<mpsc::Sender<ProgressEvent>>,
+    ) -> DownloadResult<DownloadHandle> {
+        let controller = Controller::default();
+        let client = self.client.clone();
+        let resolver = RemoteResolver::with_client(client.clone());
+        let options = options.clone();
+        let runtime_controller = controller.clone();
+        let task = tokio::spawn(async move {
+            run_download(client, resolver, options, runtime_controller, progress_tx).await
+        });
+        Ok(DownloadHandle { controller, task })
     }
 
     pub async fn download(
@@ -71,88 +106,110 @@ impl DownloadManager {
         options: &DownloadOptions,
         progress_tx: Option<mpsc::Sender<ProgressEvent>>,
     ) -> DownloadResult<DownloadOutcome> {
-        let remote = Arc::new(self.resolver.resolve(&options.url).await?);
-        let dest_path = resolve_destination(options, &remote);
-        let resumed = self.prepare_resume(options, &remote, &dest_path)?;
+        self.start(options, progress_tx)?.wait().await
+    }
+}
 
-        let (plan, effective_chunk_size) = build_plan(options, &remote, &dest_path, resumed.as_ref());
-        if let Some(tx) = &progress_tx {
-            let _ = tx.try_send(ProgressEvent::Start {
-                total: remote.size,
-                chunk_size: effective_chunk_size,
-            });
-        }
+async fn run_download(
+    client: HttpClient,
+    resolver: RemoteResolver,
+    options: DownloadOptions,
+    controller: Controller,
+    progress_tx: Option<mpsc::Sender<ProgressEvent>>,
+) -> DownloadResult<DownloadOutcome> {
+    let remote = Arc::new(resolver.resolve(&options.url).await?);
+    let dest_path = resolve_destination(&options, &remote);
+    let resumed = prepare_resume(&options, &remote, &dest_path)?;
 
-        let plan = Arc::new(plan);
-        let dispatcher = Arc::new(crate::engine::dispatch::ChunkDispatcher::new(plan));
-        let writer = Arc::new(open_writer(&dest_path, resumed.is_some())?);
-        writer.preallocate(remote.size)?;
-
-        let template = manifest_template(options, &remote, &dest_path, effective_chunk_size);
-        let checkpoint = CheckpointGuard::spawn(
-            &dest_path,
-            template,
-            Arc::clone(&dispatcher),
-            options.checkpoint_interval,
-        );
-
-        let pool = WorkerPool::new(
-            self.client.clone(),
-            Arc::clone(&remote),
-            Arc::clone(&dispatcher),
-            Arc::clone(&writer),
-            options.connections,
-            options.max_attempts,
-            progress_tx,
-        );
-        let pool_result = pool.run().await;
-
-        match pool_result {
-            Ok(()) => {
-                let sha256 = hash_file(&dest_path)?;
-                checkpoint.set_integrity_sha(sha256.clone());
-                checkpoint.finish().await?;
-                Ok(DownloadOutcome {
-                    final_url: remote.final_url.clone(),
-                    size: remote.size,
-                    sha256,
-                    dest_path,
-                    status: OutcomeStatus::Completed,
-                })
-            }
-            Err(err) => {
-                checkpoint.finish().await?;
-                Err(err)
-            }
-        }
+    let (plan, effective_chunk_size) = build_plan(&options, &remote, &dest_path, resumed.as_ref());
+    if let Some(tx) = &progress_tx {
+        let _ = tx.try_send(ProgressEvent::Start {
+            total: remote.size,
+            chunk_size: effective_chunk_size,
+        });
     }
 
-    fn prepare_resume(
-        &self,
-        options: &DownloadOptions,
-        remote: &RemoteMetadata,
-        dest: &Path,
-    ) -> DownloadResult<Option<Manifest>> {
-        if !options.resume {
-            remove_sidecar(dest);
-            return Ok(None);
+    let plan = Arc::new(plan);
+    let dispatcher = Arc::new(crate::engine::dispatch::ChunkDispatcher::new(plan));
+    let writer = Arc::new(open_writer(&dest_path, resumed.is_some())?);
+    writer.preallocate(remote.size)?;
+
+    let template = manifest_template(&options, &remote, &dest_path, effective_chunk_size);
+    let checkpoint = CheckpointGuard::spawn(
+        &dest_path,
+        template,
+        Arc::clone(&dispatcher),
+        options.checkpoint_interval,
+    );
+
+    let pool = WorkerPool::new(
+        client,
+        Arc::clone(&remote),
+        Arc::clone(&dispatcher),
+        Arc::clone(&writer),
+        controller.clone(),
+        PoolConfig {
+            connections: options.connections,
+            max_attempts: options.max_attempts,
+        },
+        progress_tx,
+    );
+    let pool_result = pool.run().await;
+
+    match pool_result {
+        Ok(()) if controller.is_cancelled() => {
+            checkpoint.finish().await?;
+            Ok(DownloadOutcome {
+                final_url: remote.final_url.clone(),
+                size: remote.size,
+                sha256: String::new(),
+                dest_path,
+                status: OutcomeStatus::Cancelled,
+            })
         }
-        let Some(manifest) = Manifest::load(dest)? else {
-            return Ok(None);
-        };
-        let local_len = match file_len(dest) {
-            Ok(len) => len,
-            Err(_) => return Ok(None),
-        };
-        let current = RemoteSnapshot {
-            size: remote.size,
-            etag: remote.etag.clone(),
-            last_modified: remote.last_modified.clone(),
-        };
-        match judge_resume(&manifest, &current, local_len) {
-            ResumeVerdict::Continue => Ok(Some(manifest)),
-            ResumeVerdict::Refuse(reason) => Err(DownloadError::ResumeRefused(reason)),
+        Ok(()) => {
+            let sha256 = hash_file(&dest_path)?;
+            checkpoint.set_integrity_sha(sha256.clone());
+            checkpoint.finish().await?;
+            Ok(DownloadOutcome {
+                final_url: remote.final_url.clone(),
+                size: remote.size,
+                sha256,
+                dest_path,
+                status: OutcomeStatus::Completed,
+            })
         }
+        Err(err) => {
+            checkpoint.finish().await?;
+            Err(err)
+        }
+    }
+}
+
+fn prepare_resume(
+    options: &DownloadOptions,
+    remote: &RemoteMetadata,
+    dest: &Path,
+) -> DownloadResult<Option<Manifest>> {
+    if !options.resume {
+        remove_sidecar(dest);
+        return Ok(None);
+    }
+    let Some(manifest) = Manifest::load(dest)? else {
+        return Ok(None);
+    };
+    let local_len = match file_len(dest) {
+        Ok(len) => len,
+        Err(_) => return Ok(None),
+    };
+    let current = RemoteSnapshot {
+        size: remote.size,
+        etag: remote.etag.clone(),
+        last_modified: remote.last_modified.clone(),
+    };
+    match judge_resume(&manifest, &current, local_len) {
+        ResumeVerdict::Continue => Ok(Some(manifest)),
+        ResumeVerdict::Refuse(reason) => Err(DownloadError::ResumeRefused(reason)),
     }
 }
 
@@ -511,5 +568,104 @@ mod tests {
         let _ = std::fs::remove_file(&dest);
         let _ = std::fs::remove_file(sidecar_path(&dest));
         assert!(matches!(result, Err(DownloadError::ResumeRefused(_))));
+    }
+
+    #[tokio::test]
+    async fn cancel_writes_a_resumable_sidecar_and_resume_completes() {
+        let body = deterministic_body(4 * 1024 * 1024, 1313);
+        let server = TestServer::spawn_with(
+            body.clone(),
+            handler::ServerFeatures {
+                delay: handler::DelayProfile::Jitter { seed: 9, max_delay_ms: 250 },
+                fragment_bytes: Some(1024),
+                ..Default::default()
+            },
+        )
+        .await;
+        let dest = std::env::temp_dir().join("shard-cancel-resume.bin");
+        let manager = DownloadManager::new().unwrap();
+
+        let mut handle = manager
+            .start(
+                &DownloadOptions {
+                    url: server.url(),
+                    dest_path: dest.clone(),
+                    chunk_size: 512 * 1024,
+                    connections: 4,
+                    max_attempts: 3,
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        handle.controller.cancel();
+        let outcome = handle.wait().await.unwrap();
+        assert_eq!(outcome.status, OutcomeStatus::Cancelled);
+        assert!(sidecar_path(&dest).exists(), "cancel must leave a resume sidecar");
+        assert!(sidecar_path(&dest).metadata().unwrap().len() > 0);
+
+        let outcome = manager
+            .download(
+                &DownloadOptions {
+                    url: server.url(),
+                    dest_path: dest.clone(),
+                    chunk_size: 512 * 1024,
+                    connections: 4,
+                    max_attempts: 3,
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome.status, OutcomeStatus::Completed);
+        assert_eq!(outcome.sha256, expected_sha256(&body));
+        assert_eq!(std::fs::read(&dest).unwrap(), body);
+        let _ = std::fs::remove_file(&dest);
+        let _ = std::fs::remove_file(sidecar_path(&dest));
+    }
+
+    #[tokio::test]
+    async fn paused_download_resumes_cleanly_and_completes() {
+        let body = deterministic_body(2 * 1024 * 1024, 4242);
+        let server = TestServer::spawn_with(
+            body.clone(),
+            handler::ServerFeatures {
+                delay: handler::DelayProfile::Reverse { max_delay_ms: 400 },
+                fragment_bytes: Some(2048),
+                ..Default::default()
+            },
+        )
+        .await;
+        let dest = std::env::temp_dir().join("shard-pause-resume.bin");
+        let manager = DownloadManager::new().unwrap();
+
+        let mut handle = manager
+            .start(
+                &DownloadOptions {
+                    url: server.url(),
+                    dest_path: dest.clone(),
+                    chunk_size: 512 * 1024,
+                    connections: 4,
+                    max_attempts: 3,
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        handle.controller.pause();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(handle.controller.is_paused());
+        tokio::time::timeout(Duration::from_millis(150), handle.wait())
+            .await
+            .expect_err("a paused download must not report completion");
+        handle.controller.resume();
+        let outcome = handle.wait().await.unwrap();
+        assert_eq!(outcome.status, OutcomeStatus::Completed);
+        assert_eq!(outcome.sha256, expected_sha256(&body));
+        assert_eq!(std::fs::read(&dest).unwrap(), body);
+        let _ = std::fs::remove_file(&dest);
+        let _ = std::fs::remove_file(sidecar_path(&dest));
     }
 }
