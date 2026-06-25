@@ -1,3 +1,4 @@
+pub mod checkpoint;
 pub mod dispatch;
 pub mod error;
 pub mod http;

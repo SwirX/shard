@@ -18,6 +18,7 @@ pub struct ServerFeatures {
     pub drop_once: Arc<Mutex<HashMap<(u64, u64), u32>>>,
     pub drop_forever: Arc<HashSet<(u64, u64)>>,
     pub content_disposition: Option<String>,
+    pub requests: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Default for ServerFeatures {
@@ -28,6 +29,7 @@ impl Default for ServerFeatures {
             drop_once: Arc::new(Mutex::new(HashMap::new())),
             drop_forever: Arc::new(HashSet::new()),
             content_disposition: None,
+            requests: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 }
@@ -77,6 +79,9 @@ async fn handle_connection(
     }
     let text = String::from_utf8_lossy(&request);
     let head = text.split("\r\n").next().unwrap_or("");
+    features
+        .requests
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let header = |name: &str| -> Option<String> {
         text.lines()
             .find(|line| line.to_ascii_lowercase().starts_with(&name.to_ascii_lowercase()))

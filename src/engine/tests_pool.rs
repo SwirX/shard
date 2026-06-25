@@ -34,6 +34,7 @@ async fn collect_progress(body: Vec<u8>, features: ServerFeatures) -> (Vec<usize
                 chunk_size: 64 * 1024,
                 connections: 8,
                 max_attempts: 4,
+                ..Default::default()
             },
             Some(tx),
         )
@@ -105,6 +106,7 @@ async fn attempt_exhaustion_fails_deterministically() {
                 chunk_size: 64 * 1024,
                 connections: 2,
                 max_attempts: 2,
+                ..Default::default()
             },
             None,
         )
@@ -134,6 +136,7 @@ async fn progress_reports_total_clients_and_completion_order() {
                 chunk_size: 64 * 1024,
                 connections: 2,
                 max_attempts: 3,
+                ..Default::default()
             },
             Some(tx),
         )
@@ -211,6 +214,7 @@ async fn throughput_benchmark() {
                     chunk_size: 1024 * 1024,
                     connections,
                     max_attempts: 3,
+                    ..Default::default()
                 },
                 None,
             )
