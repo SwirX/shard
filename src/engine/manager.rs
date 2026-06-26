@@ -8,6 +8,7 @@ use crate::engine::manifest::{
 use crate::engine::metadata::{RemoteMetadata, RemoteResolver};
 use crate::engine::planner::{Chunk, ChunkPlan};
 use crate::engine::progress::ProgressEvent;
+use crate::engine::retry::RetryPolicy;
 use crate::engine::verify::Sha256Hasher;
 use crate::engine::worker::{PoolConfig, WorkerPool};
 use crate::engine::writer::{file_len, PositionalWriter};
@@ -25,6 +26,8 @@ pub struct DownloadOptions {
     pub chunk_size: u64,
     pub connections: usize,
     pub max_attempts: u32,
+    pub retry_base_delay: Duration,
+    pub retry_max_delay: Duration,
     pub checkpoint_interval: Duration,
     pub resume: bool,
 }
@@ -37,10 +40,16 @@ impl Default for DownloadOptions {
             chunk_size: 8 * 1024 * 1024,
             connections: 8,
             max_attempts: 5,
+            retry_base_delay: Duration::from_millis(500),
+            retry_max_delay: Duration::from_secs(30),
             checkpoint_interval: Duration::from_secs(3),
             resume: true,
         }
     }
+}
+
+fn retry_policy(options: &DownloadOptions) -> RetryPolicy {
+    RetryPolicy::new(options.max_attempts).with_delays(options.retry_base_delay, options.retry_max_delay)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,7 +178,7 @@ async fn run_download(
         controller.clone(),
         PoolConfig {
             connections: options.connections,
-            max_attempts: options.max_attempts,
+            retry: retry_policy(&options),
         },
         progress_tx.clone(),
     );
@@ -286,13 +295,12 @@ async fn run_single_stream(
     progress_tx: &Option<mpsc::Sender<ProgressEvent>>,
 ) -> DownloadResult<DownloadOutcome> {
     use crate::engine::manifest::ChunkEntry;
-    use crate::engine::retry::RetryPolicy;
     use crate::engine::stream::{download_single_stream, SingleStreamSpec};
 
     let spec = SingleStreamSpec {
         url: remote.final_url.clone(),
         size: remote.size,
-        policy: RetryPolicy::new(options.max_attempts),
+        policy: retry_policy(options),
     };
     match download_single_stream(client, writer, controller, &spec, progress_tx).await {
         Ok(()) => {

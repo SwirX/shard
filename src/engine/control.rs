@@ -2,6 +2,7 @@ use crate::engine::error::{DownloadError, DownloadResult};
 use futures_util::StreamExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Notify;
 
 #[derive(Clone, Default)]
@@ -83,6 +84,20 @@ impl Controller {
         }
     }
 
+    pub async fn delay(&self, duration: Duration) -> DownloadResult<()> {
+        loop {
+            self.wait_while_paused().await;
+            if self.is_cancelled() {
+                return Err(DownloadError::Canceled);
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(duration) => return Ok(()),
+                _ = self.wait_until_paused() => {}
+                _ = self.cancelled() => return Err(DownloadError::Canceled),
+            }
+        }
+    }
+
     async fn await_until(
         &self,
         satisfied: impl Fn(bool, bool) -> bool,
@@ -154,5 +169,39 @@ mod tests {
         });
         controller.cancel();
         tokio::time::timeout(Duration::from_secs(1), waiter).await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn delay_is_interrupted_by_cancel() {
+        let controller = Controller::default();
+        let sleeper = tokio::spawn({
+            let controller = controller.clone();
+            async move { controller.delay(Duration::from_secs(30)).await }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        controller.cancel();
+        let result = tokio::time::timeout(Duration::from_secs(1), sleeper)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(result, Err(DownloadError::Canceled)));
+    }
+
+    #[tokio::test]
+    async fn delay_suspends_while_paused_and_returns_after_resume() {
+        let controller = Controller::default();
+        controller.pause();
+        let sleeper = tokio::spawn({
+            let controller = controller.clone();
+            async move { controller.delay(Duration::from_millis(50)).await }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!sleeper.is_finished(), "paused delay must not elapse");
+        controller.resume();
+        tokio::time::timeout(Duration::from_secs(1), sleeper)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
     }
 }
