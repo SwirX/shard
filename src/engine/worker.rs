@@ -4,7 +4,6 @@ use super::error::{DownloadError, DownloadResult};
 use super::metadata::RemoteMetadata;
 use super::progress::ProgressEvent;
 use super::writer::PositionalWriter;
-use futures_util::{Stream, StreamExt};
 use http::header::{CONTENT_RANGE, RANGE};
 use reqwest::Client as HttpClient;
 use std::sync::Arc;
@@ -75,6 +74,9 @@ impl WorkerPool {
                 .await
                 .map_err(|join_err| DownloadError::Io(std::io::Error::other(join_err.to_string())))?;
         }
+        if self.queue.ranges_rejected() {
+            return Err(DownloadError::RangeUnsupported);
+        }
         if self.queue.failed_count() > 0 {
             return Err(DownloadError::ChunksFailed(self.queue.failed_count()));
         }
@@ -91,7 +93,7 @@ impl WorkerPool {
                 Some(index) => index,
                 None => break,
             };
-            if self.work_chunk(worker_id, index).await == ChunkExit::Aborted {
+            if self.work_chunk(worker_id, index).await.is_aborting() {
                 break;
             }
         }
@@ -108,6 +110,10 @@ impl WorkerPool {
             Ok(()) => {
                 self.queue.settle_complete(index);
                 ChunkExit::Completed
+            }
+            Err(DownloadError::RangeUnsupported) => {
+                self.queue.reject_ranges();
+                ChunkExit::RangesRejected
             }
             Err(_) if self.controller.is_cancelled() => ChunkExit::Aborted,
             Err(_) if attempts < self.config.max_attempts as u64 => {
@@ -143,7 +149,7 @@ impl WorkerPool {
         let mut stream = response.bytes_stream();
         let mut written = 0u64;
         let mut buffer = Vec::with_capacity(64 * 1024);
-        while let Some(item) = self.next_stream_item(&mut stream).await? {
+        while let Some(item) = self.controller.next_body_chunk(&mut stream).await? {
             let bytes = item?;
             buffer.extend_from_slice(&bytes);
             if buffer.len() >= 32 * 1024 {
@@ -167,25 +173,6 @@ impl WorkerPool {
             });
         }
         Ok(())
-    }
-
-    async fn next_stream_item(
-        self: &Arc<Self>,
-        stream: &mut (impl Stream<Item = reqwest::Result<bytes::Bytes>> + Unpin),
-    ) -> DownloadResult<Option<reqwest::Result<bytes::Bytes>>> {
-        loop {
-            if self.controller.is_paused() {
-                self.controller.wait_while_paused().await;
-                if self.controller.is_cancelled() {
-                    return Err(DownloadError::Canceled);
-                }
-            }
-            tokio::select! {
-                item = stream.next() => return Ok(item),
-                _ = self.controller.wait_until_paused() => {}
-                _ = self.controller.cancelled() => return Err(DownloadError::Canceled),
-            }
-        }
     }
 
     async fn flush_buffer(
@@ -221,6 +208,13 @@ enum ChunkExit {
     Completed,
     Failed,
     Aborted,
+    RangesRejected,
+}
+
+impl ChunkExit {
+    fn is_aborting(&self) -> bool {
+        matches!(self, ChunkExit::Aborted | ChunkExit::RangesRejected)
+    }
 }
 
 pub fn validate_content_range(

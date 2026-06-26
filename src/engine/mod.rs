@@ -9,6 +9,7 @@ pub mod metadata;
 pub mod planner;
 pub mod progress;
 pub mod retry;
+pub mod stream;
 pub mod verify;
 pub mod worker;
 pub mod writer;

@@ -1,3 +1,5 @@
+use crate::engine::error::{DownloadError, DownloadResult};
+use futures_util::StreamExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Notify;
@@ -60,6 +62,25 @@ impl Controller {
 
     pub async fn cancelled(&self) {
         self.await_until(|_, cancelled| cancelled, &self.inner.cancel_notify).await;
+    }
+
+    pub async fn next_body_chunk(
+        &self,
+        stream: &mut (impl futures_util::Stream<Item = reqwest::Result<bytes::Bytes>> + Unpin),
+    ) -> DownloadResult<Option<reqwest::Result<bytes::Bytes>>> {
+        loop {
+            if self.is_paused() {
+                self.wait_while_paused().await;
+                if self.is_cancelled() {
+                    return Err(DownloadError::Canceled);
+                }
+            }
+            tokio::select! {
+                item = stream.next() => return Ok(item),
+                _ = self.wait_until_paused() => {}
+                _ = self.cancelled() => return Err(DownloadError::Canceled),
+            }
+        }
     }
 
     async fn await_until(

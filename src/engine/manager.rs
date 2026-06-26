@@ -2,7 +2,9 @@ use crate::engine::checkpoint::CheckpointGuard;
 use crate::engine::control::Controller;
 use crate::engine::error::{DownloadError, DownloadResult};
 use crate::engine::http::EngineHttp;
-use crate::engine::manifest::{judge_resume, remove_sidecar, Manifest, ManifestTemplate, RemoteSnapshot, ResumeVerdict};
+use crate::engine::manifest::{
+    judge_resume, remove_sidecar, Manifest, ManifestTemplate, RemoteSnapshot, ResumeVerdict,
+};
 use crate::engine::metadata::{RemoteMetadata, RemoteResolver};
 use crate::engine::planner::{Chunk, ChunkPlan};
 use crate::engine::progress::ProgressEvent;
@@ -119,6 +121,23 @@ async fn run_download(
 ) -> DownloadResult<DownloadOutcome> {
     let remote = Arc::new(resolver.resolve(&options.url).await?);
     let dest_path = resolve_destination(&options, &remote);
+    let stream_client = client.clone();
+
+    if !remote.accepts_ranges {
+        remove_sidecar(&dest_path);
+        let writer = Arc::new(PositionalWriter::open(&dest_path)?);
+        return run_single_stream(
+            &stream_client,
+            writer,
+            &remote,
+            &dest_path,
+            &options,
+            &controller,
+            &progress_tx,
+        )
+        .await;
+    }
+
     let resumed = prepare_resume(&options, &remote, &dest_path)?;
 
     let (plan, effective_chunk_size) = build_plan(&options, &remote, &dest_path, resumed.as_ref());
@@ -152,7 +171,7 @@ async fn run_download(
             connections: options.connections,
             max_attempts: options.max_attempts,
         },
-        progress_tx,
+        progress_tx.clone(),
     );
     let pool_result = pool.run().await;
 
@@ -178,6 +197,21 @@ async fn run_download(
                 dest_path,
                 status: OutcomeStatus::Completed,
             })
+        }
+        Err(DownloadError::RangeUnsupported) => {
+            checkpoint.finish().await?;
+            remove_sidecar(&dest_path);
+            let writer = Arc::new(PositionalWriter::open(&dest_path)?);
+            run_single_stream(
+                &stream_client,
+                writer,
+                &remote,
+                &dest_path,
+                &options,
+                &controller,
+                &progress_tx,
+            )
+            .await
         }
         Err(err) => {
             checkpoint.finish().await?;
@@ -239,6 +273,56 @@ fn build_plan(
                 options.chunk_size,
             )
         }
+    }
+}
+
+async fn run_single_stream(
+    client: &HttpClient,
+    writer: Arc<PositionalWriter>,
+    remote: &RemoteMetadata,
+    dest: &Path,
+    options: &DownloadOptions,
+    controller: &Controller,
+    progress_tx: &Option<mpsc::Sender<ProgressEvent>>,
+) -> DownloadResult<DownloadOutcome> {
+    use crate::engine::manifest::ChunkEntry;
+    use crate::engine::retry::RetryPolicy;
+    use crate::engine::stream::{download_single_stream, SingleStreamSpec};
+
+    let spec = SingleStreamSpec {
+        url: remote.final_url.clone(),
+        size: remote.size,
+        policy: RetryPolicy::new(options.max_attempts),
+    };
+    match download_single_stream(client, writer, controller, &spec, progress_tx).await {
+        Ok(()) => {
+            let sha256 = hash_file(dest)?;
+            let template = manifest_template(options, remote, dest, remote.size.max(1));
+            let manifest = template.into_manifest(
+                vec![ChunkEntry {
+                    start: 0,
+                    end: remote.size.saturating_sub(1),
+                    downloaded: remote.size,
+                }],
+                Some(sha256.clone()),
+            );
+            manifest.save_atomic(dest)?;
+            Ok(DownloadOutcome {
+                final_url: remote.final_url.clone(),
+                size: remote.size,
+                sha256,
+                dest_path: dest.to_path_buf(),
+                status: OutcomeStatus::Completed,
+            })
+        }
+        Err(DownloadError::Canceled) => Ok(DownloadOutcome {
+            final_url: remote.final_url.clone(),
+            size: remote.size,
+            sha256: String::new(),
+            dest_path: dest.to_path_buf(),
+            status: OutcomeStatus::Cancelled,
+        }),
+        Err(err) => Err(err),
     }
 }
 
@@ -459,11 +543,7 @@ mod tests {
     async fn resume_fetches_only_chunks_missing_from_the_manifest() {
         let chunk_size = 256 * 1024;
         let body = deterministic_body(4 * chunk_size, 7777);
-        let features = ServerFeatures {
-            ..Default::default()
-        };
-        let request_counter = Arc::clone(&features.requests);
-        let server = TestServer::spawn_with(body.clone(), features).await;
+        let server = TestServer::spawn_with(body.clone(), ServerFeatures::default()).await;
         let dest = std::env::temp_dir().join("shard-resume-manifest.bin");
 
         let chunks = vec![
@@ -515,7 +595,7 @@ mod tests {
         assert_eq!(outcome.sha256, expected_sha256(&body));
         assert_eq!(outcome.status, OutcomeStatus::Completed);
         assert_eq!(
-            request_counter.load(std::sync::atomic::Ordering::SeqCst),
+            server.request_count(),
             5,
             "expected one pending and one partial chunk fetch plus the three preflight probes"
         );
@@ -627,6 +707,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn non_range_server_downloads_via_single_stream() {
+        let body = deterministic_body(3 * 1024 * 1024, 7777);
+        let server = TestServer::spawn_with(
+            body.clone(),
+            handler::ServerFeatures {
+                ranges: handler::RangesMode::None,
+                ..Default::default()
+            },
+        )
+        .await;
+        let dest = std::env::temp_dir().join("shard-no-ranges.bin");
+        let manager = DownloadManager::new().unwrap();
+
+        let outcome = manager
+            .download(
+                &DownloadOptions {
+                    url: server.url(),
+                    dest_path: dest.clone(),
+                    chunk_size: 512 * 1024,
+                    connections: 4,
+                    max_attempts: 3,
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.status, OutcomeStatus::Completed);
+        assert_eq!(outcome.size, body.len() as u64);
+        assert_eq!(outcome.sha256, expected_sha256(&body));
+        assert_eq!(std::fs::read(&dest).unwrap(), body);
+        assert_eq!(server.request_count(), 4);
+        let _ = std::fs::remove_file(&dest);
+        let _ = std::fs::remove_file(sidecar_path(&dest));
+    }
+
+    #[tokio::test]
     async fn paused_download_resumes_cleanly_and_completes() {
         let body = deterministic_body(2 * 1024 * 1024, 4242);
         let server = TestServer::spawn_with(
@@ -662,6 +780,42 @@ mod tests {
             .expect_err("a paused download must not report completion");
         handle.controller.resume();
         let outcome = handle.wait().await.unwrap();
+        assert_eq!(outcome.status, OutcomeStatus::Completed);
+        assert_eq!(outcome.sha256, expected_sha256(&body));
+        assert_eq!(std::fs::read(&dest).unwrap(), body);
+        let _ = std::fs::remove_file(&dest);
+        let _ = std::fs::remove_file(sidecar_path(&dest));
+    }
+
+    #[tokio::test]
+    async fn lying_server_falls_back_to_single_stream() {
+        let body = deterministic_body(2 * 1024 * 1024, 31337);
+        let server = TestServer::spawn_with(
+            body.clone(),
+            handler::ServerFeatures {
+                ranges: handler::RangesMode::ProbeOnly,
+                ..Default::default()
+            },
+        )
+        .await;
+        let dest = std::env::temp_dir().join("shard-lying-server.bin");
+        let manager = DownloadManager::new().unwrap();
+
+        let outcome = manager
+            .download(
+                &DownloadOptions {
+                    url: server.url(),
+                    dest_path: dest.clone(),
+                    chunk_size: 256 * 1024,
+                    connections: 4,
+                    max_attempts: 3,
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
         assert_eq!(outcome.status, OutcomeStatus::Completed);
         assert_eq!(outcome.sha256, expected_sha256(&body));
         assert_eq!(std::fs::read(&dest).unwrap(), body);
