@@ -14,6 +14,7 @@ pub struct ChunkDispatcher {
     settled: AtomicUsize,
     failed: AtomicUsize,
     shutdown: AtomicBool,
+    ranges_rejected: AtomicBool,
     notify: Notify,
 }
 
@@ -43,6 +44,7 @@ impl ChunkDispatcher {
             settled: AtomicUsize::new(settled),
             failed: AtomicUsize::new(0),
             shutdown: AtomicBool::new(false),
+            ranges_rejected: AtomicBool::new(false),
             notify: Notify::new(),
         }
     }
@@ -75,6 +77,15 @@ impl ChunkDispatcher {
     pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::SeqCst);
         self.notify.notify_waiters();
+    }
+
+    pub fn reject_ranges(&self) {
+        self.ranges_rejected.store(true, Ordering::SeqCst);
+        self.shutdown();
+    }
+
+    pub fn ranges_rejected(&self) -> bool {
+        self.ranges_rejected.load(Ordering::Acquire)
     }
 
     pub fn attempt(&self, index: usize) -> u64 {

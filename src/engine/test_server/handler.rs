@@ -11,6 +11,13 @@ pub enum DelayProfile {
     Jitter { seed: u64, max_delay_ms: u64 },
 }
 
+#[derive(Clone, Debug)]
+pub enum RangesMode {
+    Full,
+    None,
+    ProbeOnly,
+}
+
 #[derive(Clone)]
 pub struct ServerFeatures {
     pub delay: DelayProfile,
@@ -19,6 +26,7 @@ pub struct ServerFeatures {
     pub drop_forever: Arc<HashSet<(u64, u64)>>,
     pub content_disposition: Option<String>,
     pub requests: Arc<std::sync::atomic::AtomicUsize>,
+    pub ranges: RangesMode,
 }
 
 impl Default for ServerFeatures {
@@ -30,6 +38,7 @@ impl Default for ServerFeatures {
             drop_forever: Arc::new(HashSet::new()),
             content_disposition: None,
             requests: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            ranges: RangesMode::Full,
         }
     }
 }
@@ -88,9 +97,10 @@ async fn handle_connection(
             .and_then(|line| line.split_once(':').map(|(_, v)| v.trim().to_string()))
     };
     let range_text = header("range");
-    let range = range_text
+    let raw_range = range_text
         .as_deref()
         .and_then(|range| parse_single_range(range, body.len()));
+    let range = effective_range(&features.ranges, raw_range);
     let is_head = head.starts_with("HEAD");
 
     if should_drop(features, range) {
@@ -118,6 +128,15 @@ async fn handle_connection(
 
 fn is_chunk_range(range: Option<(usize, usize)>) -> bool {
     matches!(range, Some((start, end)) if start != 0 || end != 0)
+}
+
+fn effective_range(mode: &RangesMode, range: Option<(usize, usize)>) -> Option<(usize, usize)> {
+    match mode {
+        RangesMode::Full => range,
+        RangesMode::None => None,
+        RangesMode::ProbeOnly if range == Some((0, 0)) => range,
+        RangesMode::ProbeOnly => None,
+    }
 }
 
 fn should_drop(features: &ServerFeatures, range: Option<(usize, usize)>) -> bool {

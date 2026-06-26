@@ -1,12 +1,15 @@
 pub mod handler;
 
 use handler::{serve, ServerFeatures};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tokio::net::TcpListener;
 
 pub struct TestServer {
     pub addr: std::net::SocketAddr,
     pub body: Vec<u8>,
     pub etag: String,
+    requests: Arc<AtomicUsize>,
 }
 
 impl TestServer {
@@ -20,12 +23,24 @@ impl TestServer {
         let etag = format!("\"fake-{}-{}\"", body.len(), body.len() + 1);
         let body_clone = body.clone();
         let etag_clone = etag.clone();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let mut features = features;
+        features.requests = Arc::clone(&requests);
         tokio::spawn(serve(listener, body_clone, etag_clone, features));
-        Self { addr, body, etag }
+        Self {
+            addr,
+            body,
+            etag,
+            requests,
+        }
     }
 
     pub fn url(&self) -> String {
         format!("http://{}/file.bin", self.addr)
+    }
+
+    pub fn request_count(&self) -> usize {
+        self.requests.load(Ordering::SeqCst)
     }
 }
 
