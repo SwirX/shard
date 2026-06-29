@@ -34,6 +34,7 @@ async fn collect_progress(body: Vec<u8>, features: ServerFeatures) -> (Vec<usize
                 chunk_size: 64 * 1024,
                 connections: 8,
                 max_attempts: 4,
+                retry_base_delay: std::time::Duration::from_millis(1),
                 ..Default::default()
             },
             Some(tx),
@@ -106,6 +107,7 @@ async fn attempt_exhaustion_fails_deterministically() {
                 chunk_size: 64 * 1024,
                 connections: 2,
                 max_attempts: 2,
+                retry_base_delay: std::time::Duration::from_millis(1),
                 ..Default::default()
             },
             None,
@@ -192,6 +194,44 @@ async fn progress_reports_total_clients_and_completion_order() {
         );
     }
     let _ = std::fs::remove_file(&dest);
+}
+
+#[tokio::test]
+async fn retry_backoff_paces_retry_attempts() {
+    let body = deterministic_body(128 * 1024, 1234);
+    let drop_forever = Arc::new([(0u64, 65535u64)].into_iter().collect());
+    let features = ServerFeatures {
+        drop_forever,
+        ..Default::default()
+    };
+    let server = TestServer::spawn_with(body.clone(), features).await;
+    let dest = scratch_path("backoff.bin");
+    let manager = DownloadManager::new().unwrap();
+
+    let started = Instant::now();
+    let result = manager
+        .download(
+            &DownloadOptions {
+                url: server.url(),
+                dest_path: dest.clone(),
+                chunk_size: 64 * 1024,
+                connections: 1,
+                max_attempts: 2,
+                retry_base_delay: std::time::Duration::from_millis(200),
+                retry_max_delay: std::time::Duration::from_secs(1),
+                ..Default::default()
+            },
+            None,
+        )
+        .await;
+    let elapsed = started.elapsed();
+
+    let _ = std::fs::remove_file(&dest);
+    assert!(matches!(result, Err(DownloadError::ChunksFailed(_))));
+    assert!(
+        elapsed >= std::time::Duration::from_millis(150),
+        "one failed attempt must wait the base backoff before retrying (took {elapsed:?})"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]

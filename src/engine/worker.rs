@@ -3,6 +3,7 @@ use super::dispatch::ChunkDispatcher;
 use super::error::{DownloadError, DownloadResult};
 use super::metadata::RemoteMetadata;
 use super::progress::ProgressEvent;
+use super::retry::RetryPolicy;
 use super::writer::PositionalWriter;
 use http::header::{CONTENT_RANGE, RANGE};
 use reqwest::Client as HttpClient;
@@ -11,7 +12,7 @@ use tokio::sync::mpsc;
 
 pub struct PoolConfig {
     pub connections: usize,
-    pub max_attempts: u32,
+    pub retry: RetryPolicy,
 }
 
 pub struct WorkerPool {
@@ -116,9 +117,18 @@ impl WorkerPool {
                 ChunkExit::RangesRejected
             }
             Err(_) if self.controller.is_cancelled() => ChunkExit::Aborted,
-            Err(_) if attempts < self.config.max_attempts as u64 => {
-                self.queue.requeue(index).await;
-                ChunkExit::Completed
+            Err(_) if attempts < self.config.retry.max_attempts as u64 => {
+                match self
+                    .controller
+                    .delay(self.config.retry.next_delay(attempts as u32))
+                    .await
+                {
+                    Ok(()) => {
+                        self.queue.requeue(index).await;
+                        ChunkExit::Completed
+                    }
+                    Err(_) => ChunkExit::Aborted,
+                }
             }
             Err(_) => {
                 self.queue.settle_failed(index);
