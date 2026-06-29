@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ProgressMode {
     Plain,
     Nerd,
@@ -16,11 +18,23 @@ impl fmt::Display for ProgressMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ColorChoice {
     Auto,
     Always,
     Never,
+}
+
+impl fmt::Display for ColorChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            ColorChoice::Auto => "auto",
+            ColorChoice::Always => "always",
+            ColorChoice::Never => "never",
+        };
+        f.write_str(name)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
