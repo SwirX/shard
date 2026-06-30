@@ -1,39 +1,184 @@
 use crate::cli::style::{ColorChoice, ProgressMode};
+use serde::{Deserialize, Serialize};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
-    path: PathBuf,
-    pub color: Option<ColorChoice>,
-    pub progress: Option<ProgressMode>,
+    #[serde(default)]
+    pub style: StyleSection,
+    #[serde(default)]
+    pub download: DownloadSection,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct StyleSection {
+    #[serde(default = "default_color")]
+    pub color: ColorChoice,
+    #[serde(default = "default_progress")]
+    pub progress: ProgressMode,
+}
+
+impl Default for StyleSection {
+    fn default() -> Self {
+        Self {
+            color: default_color(),
+            progress: default_progress(),
+        }
+    }
+}
+
+fn default_color() -> ColorChoice {
+    ColorChoice::Auto
+}
+
+fn default_progress() -> ProgressMode {
+    ProgressMode::Plain
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct DownloadSection {
+    #[serde(default = "default_connections")]
+    pub connections: usize,
+    #[serde(default = "default_chunk_size")]
+    pub chunk_size: u64,
+    #[serde(default = "default_max_attempts")]
+    pub max_attempts: u32,
+    #[serde(default = "default_retry_base_ms")]
+    pub retry_base_ms: u64,
+    #[serde(default = "default_retry_max_ms")]
+    pub retry_max_ms: u64,
+    #[serde(default = "default_checkpoint_ms")]
+    pub checkpoint_ms: u64,
+    #[serde(default = "default_resume")]
+    pub resume: bool,
+}
+
+impl Default for DownloadSection {
+    fn default() -> Self {
+        Self {
+            connections: default_connections(),
+            chunk_size: default_chunk_size(),
+            max_attempts: default_max_attempts(),
+            retry_base_ms: default_retry_base_ms(),
+            retry_max_ms: default_retry_max_ms(),
+            checkpoint_ms: default_checkpoint_ms(),
+            resume: default_resume(),
+        }
+    }
+}
+
+fn default_connections() -> usize {
+    8
+}
+
+fn default_chunk_size() -> u64 {
+    8 * 1024 * 1024
+}
+
+fn default_max_attempts() -> u32 {
+    5
+}
+
+fn default_retry_base_ms() -> u64 {
+    500
+}
+
+fn default_retry_max_ms() -> u64 {
+    30_000
+}
+
+fn default_checkpoint_ms() -> u64 {
+    3000
+}
+
+fn default_resume() -> bool {
+    true
 }
 
 impl Config {
-    pub fn load() -> Config {
-        let path = config_path();
-        let Ok(body) = std::fs::read_to_string(&path) else {
-            return Config { path, color: None, progress: None };
-        };
-        let (color, progress) = parse_options(&body);
-        Config { path, color, progress }
+    pub fn load() -> std::io::Result<Config> {
+        Self::load_from(&config_path())
     }
 
-    pub fn path(&self) -> &PathBuf {
-        &self.path
+    fn load_from(path: &Path) -> std::io::Result<Config> {
+        let Ok(body) = std::fs::read_to_string(path) else {
+            return Ok(Config::default());
+        };
+        if body.trim().is_empty() {
+            return Ok(Config::default());
+        }
+        toml::from_str(&body).map_err(|err| {
+            std::io::Error::other(format!("invalid config {}: {err}", path.display()))
+        })
     }
 
     pub fn init() -> std::io::Result<()> {
-        let path = config_path();
+        Self::init_at(&config_path())
+    }
+
+    fn init_at(path: &Path) -> std::io::Result<()> {
         if path.exists() {
             return Err(std::io::Error::other(format!(
                 "config already exists at {}",
                 path.display()
             )));
         }
-        std::fs::create_dir_all(path.parent().expect("config dir has a parent"))?;
-        let mut file = std::fs::File::create(&path)?;
-        file.write_all(SHARD_CONF_SAMPLE.as_bytes())?;
+        std::fs::create_dir_all(path.parent().expect("config always has a parent directory"))?;
+        write_atomic(path, SHARD_CONF_SAMPLE)
+    }
+
+    pub fn set(key: &str, value: &str) -> std::io::Result<()> {
+        Self::set_at(&config_path(), key, value)
+    }
+
+    fn set_at(path: &Path, key: &str, value: &str) -> std::io::Result<()> {
+        let (section, field, parsed) = parse_set_value(key, value)?;
+        std::fs::create_dir_all(path.parent().expect("config always has a parent directory"))?;
+        let mut doc: toml::Table = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|body| toml::from_str(&body).ok())
+            .unwrap_or_default();
+        let table = doc
+            .entry(section.as_str().to_string())
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        let table = table
+            .as_table_mut()
+            .ok_or_else(|| std::io::Error::other("config section is not a table"))?;
+        table.insert(field.to_string(), parsed);
+        write_atomic(
+            path,
+            &toml::to_string(&doc).expect("re-serializing toml cannot fail"),
+        )
+    }
+
+    pub fn edit() -> std::io::Result<()> {
+        let path = config_path();
+        if !path.exists() {
+            Self::init()?;
+        }
+        let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+        let status = std::process::Command::new(&editor).arg(&path).status()?;
+        if !status.success() {
+            return Err(std::io::Error::other(format!(
+                "{editor} exited with {status}"
+            )));
+        }
         Ok(())
+    }
+
+    pub fn keys() -> [&'static str; 9] {
+        [
+            "color",
+            "progress",
+            "connections",
+            "chunk_size",
+            "max_attempts",
+            "retry_base_ms",
+            "retry_max_ms",
+            "checkpoint_ms",
+            "resume",
+        ]
     }
 }
 
@@ -45,95 +190,191 @@ pub fn config_path() -> PathBuf {
     base.join("shard").join("shard.conf")
 }
 
-fn parse_options(body: &str) -> (Option<ColorChoice>, Option<ProgressMode>) {
-    let mut color = None;
-    let mut progress = None;
-    for raw_line in body.lines() {
-        let trimmed = raw_line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('[') {
-            continue;
-        }
-        if let Some(rest) = trimmed.strip_prefix('#') {
-            let name = rest.trim();
-            if matches!(name, "Color" | "color") {
-                color = Some(ColorChoice::Never);
-            }
-            continue;
-        }
-        if matches!(trimmed, "Color" | "color") {
-            color = Some(ColorChoice::Always);
-            continue;
-        }
-        if let Some((key, value)) = trimmed.split_once('=') {
-            let key = key.trim();
-            let value = value.trim();
-            match key {
-                "Color" | "color" => match value {
-                    "always" => color = Some(ColorChoice::Always),
-                    "never" => color = Some(ColorChoice::Never),
-                    "auto" => color = Some(ColorChoice::Auto),
-                    _ => {}
-                },
-                "Progress" | "progress" => match value {
-                    "plain" => progress = Some(ProgressMode::Plain),
-                    "nerd" => progress = Some(ProgressMode::Nerd),
-                    _ => {}
-                },
-                _ => {}
-            }
-        }
-    }
-    (color, progress)
+#[derive(Clone, Copy)]
+enum Section {
+    Style,
+    Download,
 }
 
-const SHARD_CONF_SAMPLE: &str = "[options]
-# Pacman-style toggles: a bare flag enables it, comment it out (#Color) to disable,
-# or use an explicit \"Color = never\" for off.
-Color
+impl Section {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Section::Style => "style",
+            Section::Download => "download",
+        }
+    }
+}
 
-# Progress eyecandy: plain (ascii, everything) or nerd (block glyphs + icons, Nerd Font terminals).
-# Progress = nerd
-Progress = plain
-";
+fn parse_set_value<'a>(
+    key: &'a str,
+    value: &str,
+) -> std::io::Result<(Section, &'a str, toml::Value)> {
+    let (section, field): (Section, &str) = match key {
+        "color" | "progress" => (Section::Style, key),
+        "connections" | "chunk_size" | "max_attempts" | "retry_base_ms" | "retry_max_ms"
+        | "checkpoint_ms" | "resume" => (Section::Download, key),
+        _ => {
+            return Err(std::io::Error::other(format!(
+                "unknown key {key:?}; pick one of: {}",
+                Config::keys().join(", ")
+            )));
+        }
+    };
+    let parsed = match field {
+        "color" => {
+            parse_enum(value, &["auto", "always", "never"], "color must be auto, always, or never")?
+        }
+        "progress" => parse_enum(value, &["plain", "nerd"], "progress must be plain or nerd")?,
+        "resume" => toml::Value::Boolean(parse_bool(value)?),
+        _ => toml::Value::Integer(parse_positive(value, field)?),
+    };
+    Ok((section, field, parsed))
+}
+
+fn parse_enum(value: &str, allowed: &[&str], hint: &str) -> std::io::Result<toml::Value> {
+    if !allowed.contains(&value) {
+        return Err(std::io::Error::other(hint.to_string()));
+    }
+    Ok(toml::Value::String(value.to_string()))
+}
+
+fn parse_bool(value: &str) -> std::io::Result<bool> {
+    match value {
+        "true" | "yes" | "on" | "1" => Ok(true),
+        "false" | "no" | "off" | "0" => Ok(false),
+        other => Err(std::io::Error::other(format!(
+            "resume must be true or false, got {other:?}"
+        ))),
+    }
+}
+
+fn parse_positive(value: &str, field: &str) -> std::io::Result<i64> {
+    let parsed: i64 = value
+        .parse()
+        .map_err(|_| std::io::Error::other(format!("{field} must be a positive integer")))?;
+    if parsed <= 0 {
+        return Err(std::io::Error::other(format!(
+            "{field} must be a positive integer"
+        )));
+    }
+    Ok(parsed)
+}
+
+fn write_atomic(path: &Path, body: &str) -> std::io::Result<()> {
+    let tmp = path.with_extension("tmp");
+    {
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(body.as_bytes())?;
+        file.sync_all()?;
+    }
+    std::fs::rename(&tmp, path)?;
+    if let Some(parent) = path.parent() {
+        std::fs::File::open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
+const SHARD_CONF_SAMPLE: &str = r#"# shard.conf - at ~/.config/shard/shard.conf (or $XDG_CONFIG_HOME/shard/shard.conf)
+# Every key is optional; omitted keys fall back to the built-in defaults shown here.
+
+[style]
+color = "auto"      # auto | always | never
+progress = "plain"  # plain | nerd
+
+[download]
+connections = 8
+chunk_size = 8388608
+max_attempts = 5
+retry_base_ms = 500
+retry_max_ms = 30000
+checkpoint_ms = 3000
+resume = true
+"#;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn parse(body: &str) -> (Option<ColorChoice>, Option<ProgressMode>) {
-        parse_options(body)
+    fn scratch() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "shard-config-test-{}-{}",
+            std::process::id(),
+            NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("shard.conf")
+    }
+
+    static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    #[test]
+    fn absent_file_yields_builtin_defaults() {
+        let config = Config::load_from(&scratch()).unwrap();
+        assert_eq!(config.style.color, ColorChoice::Auto);
+        assert_eq!(config.style.progress, ProgressMode::Plain);
+        assert_eq!(config.download.connections, 8);
+        assert_eq!(config.download.chunk_size, 8 * 1024 * 1024);
+        assert!(config.download.resume);
     }
 
     #[test]
-    fn bare_color_flag_enables_color() {
-        let (color, _) = parse("Color\n");
-        assert_eq!(color, Some(ColorChoice::Always));
+    fn partial_files_fill_missing_keys_from_defaults() {
+        let path = scratch();
+        std::fs::write(&path, "[download]\nconnections = 3\n").unwrap();
+        let config = Config::load_from(&path).unwrap();
+        assert_eq!(config.download.connections, 3);
+        assert_eq!(config.download.max_attempts, 5);
+        assert_eq!(config.style.color, ColorChoice::Auto);
     }
 
     #[test]
-    fn commented_color_flag_disables_color() {
-        let (color, _) = parse("#Color\n");
-        assert_eq!(color, Some(ColorChoice::Never));
+    fn invalid_toml_is_reported() {
+        let path = scratch();
+        std::fs::write(&path, "connections = ]").unwrap();
+        assert!(Config::load_from(&path).is_err());
     }
 
     #[test]
-    fn value_lines_set_progress_and_color() {
-        let (color, progress) = parse("Progress = nerd\nColor = auto\n");
-        assert_eq!(progress, Some(ProgressMode::Nerd));
-        assert_eq!(color, Some(ColorChoice::Auto));
+    fn bad_enum_value_fails_typed_set() {
+        let path = scratch();
+        assert!(Config::set_at(&path, "color", "violet").is_err());
+        assert!(Config::set_at(&path, "connections", "twelve").is_err());
+        assert!(Config::set_at(&path, "connections", "0").is_err());
+        assert!(Config::set_at(&path, "resume", "true").is_ok());
+        assert!(Config::set_at(&path, "resume", "no").is_ok());
     }
 
     #[test]
-    fn unknown_lines_are_ignored() {
-        let (color, progress) = parse("[unrelated]\nFoo = 1\n");
-        assert_eq!(color, None);
-        assert_eq!(progress, None);
+    fn set_then_load_round_trips() {
+        let path = scratch();
+        Config::set_at(&path, "chunk_size", "4194304").unwrap();
+        Config::set_at(&path, "progress", "nerd").unwrap();
+        let config = Config::load_from(&path).unwrap();
+        assert_eq!(config.download.chunk_size, 4 * 1024 * 1024);
+        assert_eq!(config.style.progress, ProgressMode::Nerd);
     }
 
     #[test]
-    fn empty_config_defaults_to_nothing() {
-        let (color, progress) = parse("");
-        assert_eq!(color, None);
-        assert_eq!(progress, None);
+    fn overwriting_an_existing_key_updates_it() {
+        let path = scratch();
+        Config::set_at(&path, "connections", "3").unwrap();
+        Config::set_at(&path, "connections", "6").unwrap();
+        let config = Config::load_from(&path).unwrap();
+        assert_eq!(config.download.connections, 6);
+        assert_eq!(config.download.max_attempts, 5);
+    }
+
+    #[test]
+    fn unknown_key_is_rejected() {
+        let path = scratch();
+        let message = Config::set_at(&path, "threads", "4").unwrap_err().to_string();
+        assert!(message.contains("unknown key"), "got: {message}");
+    }
+
+    #[test]
+    fn sample_document_parses() {
+        let config: Config = toml::from_str(SHARD_CONF_SAMPLE).unwrap();
+        assert_eq!(config.download.connections, 8);
+        assert_eq!(config.style.color, ColorChoice::Auto);
     }
 }
