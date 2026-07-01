@@ -133,17 +133,17 @@ fn default_resume() -> bool {
 fn default_download_dir() -> String {
     let base = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
     let mut candidate = base.join("Downloads");
-    if let Ok(dirs) = std::fs::read_to_string(base.join(".config").join("user-dirs.dirs")) {
-        if let Some(line) = dirs.lines().find_map(|line| {
-            line.strip_prefix("XDG_DOWNLOAD_DIR=")
-        }) {
-            let expanded = line
-                .trim()
-                .trim_matches('"')
-                .replace("$HOME", base.to_str().unwrap_or(""));
-            if !expanded.is_empty() {
-                candidate = PathBuf::from(expanded);
-            }
+    if let Ok(dirs) = std::fs::read_to_string(base.join(".config").join("user-dirs.dirs"))
+        && let Some(line) = dirs
+            .lines()
+            .find_map(|line| line.strip_prefix("XDG_DOWNLOAD_DIR="))
+    {
+        let expanded = line
+            .trim()
+            .trim_matches('"')
+            .replace("$HOME", base.to_str().unwrap_or(""));
+        if !expanded.is_empty() {
+            candidate = PathBuf::from(expanded);
         }
     }
     candidate.to_string_lossy().to_string()
