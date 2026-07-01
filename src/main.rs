@@ -57,6 +57,11 @@ enum Command {
     Cancel {
         id: String,
     },
+    History,
+    Redo {
+        #[arg(value_name = "ID|URL")]
+        id_or_url: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -143,6 +148,8 @@ async fn main() -> anyhow::Result<()> {
             println!("cancelled {id}");
         }
         Command::Resume { id } => resume_cli(&id).await?,
+        Command::History => history_cli()?,
+        Command::Redo { id_or_url } => redo_cli(&id_or_url).await?,
     }
     Ok(())
 }
@@ -277,6 +284,18 @@ async fn run_download_cli(
         updated_at: registry::iso_now(),
     };
     store.add(&entry)?;
+    let history_store = history::History::open()?;
+    history_store.record(&history::HistoryEntry {
+        id: id.clone(),
+        url: opts.url.clone(),
+        final_url: None,
+        dest: opts.dest_path.clone(),
+        status: registry::EntryStatus::Downloading,
+        size: 0,
+        sha256: None,
+        started_at: registry::iso_now(),
+        updated_at: registry::iso_now(),
+    })?;
     println!("download {id} -> {}", opts.dest_path.display());
     println!("  control via: shard status|pause|resume|cancel {id}");
     let manager = DownloadManager::new()?;
@@ -306,6 +325,17 @@ async fn run_download_cli(
         Err(err) => {
             drop(key_tx);
             let _ = store.update(&id, |entry| entry.status = registry::EntryStatus::Failed);
+            let _ = history_store.record(&history::HistoryEntry {
+                id: id.clone(),
+                url: opts.url.clone(),
+                final_url: None,
+                dest: opts.dest_path.clone(),
+                status: registry::EntryStatus::Failed,
+                size: 0,
+                sha256: None,
+                started_at: registry::iso_now(),
+                updated_at: registry::iso_now(),
+            });
             shutdown_tx.send(true).ok();
             drop(socket_task);
             return Err(anyhow::anyhow!("{err}"));
@@ -334,12 +364,86 @@ async fn run_download_cli(
         entry.final_dest = Some(outcome.dest_path.clone());
         entry.dest = outcome.dest_path.clone();
     })?;
+    let final_url = outcome.final_url.clone();
+    let sha256 = outcome.sha256.clone();
+    let size = outcome.size;
+    let final_dest = outcome.dest_path.clone();
+    history_store.record(&history::HistoryEntry {
+        id: id.clone(),
+        url: opts.url.clone(),
+        final_url: Some(final_url),
+        dest: final_dest,
+        status,
+        size,
+        sha256: Some(sha256),
+        started_at: registry::iso_now(),
+        updated_at: registry::iso_now(),
+    })?;
     println!();
     println!("saved {} bytes -> {}", outcome.size, outcome.dest_path.display());
     if !outcome.sha256.is_empty() {
         println!("sha256 {}", outcome.sha256);
     }
     Ok(())
+}
+
+fn history_cli() -> anyhow::Result<()> {
+    let history = history::History::open()?;
+    let rows = history.list()?;
+    if rows.is_empty() {
+        println!("no downloads in history yet");
+        return Ok(());
+    }
+    println!("{:<22} {:<11} {:<10} {:<64} SRC", "ID", "STATUS", "SIZE", "DEST");
+    for row in rows {
+        let exists = if row.dest.exists() { "on-disk" } else { "gone" };
+        let size = if row.size > 0 {
+            let (_size, unit) = humansize(row.size);
+            format!("{_size} {unit}")
+        } else {
+            "-".to_string()
+        };
+        println!(
+            "{:<22} {:<11} {:<10} {:<64} {exists}",
+            row.id,
+            row.status,
+            size,
+            row.dest.display()
+        );
+    }
+    Ok(())
+}
+
+fn humansize(bytes: u64) -> (f64, &'static str) {
+    const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    (value, UNITS[unit])
+}
+
+async fn redo_cli(id_or_url: &str) -> anyhow::Result<()> {
+    let history = history::History::open()?;
+    let row = history
+        .by_id_or_url(id_or_url)?
+        .ok_or_else(|| anyhow::anyhow!("no download in history matches {id_or_url:?}"))?;
+    let style = resolve_style(None, None)?;
+    let conf = config::Config::load()?;
+    let opts = DownloadOptions {
+        url: row.url.clone(),
+        dest_path: row.dest.clone(),
+        connections: conf.download.connections,
+        chunk_size: conf.download.chunk_size,
+        max_attempts: conf.download.max_attempts,
+        retry_base_delay: Duration::from_millis(conf.download.retry_base_ms),
+        retry_max_delay: Duration::from_millis(conf.download.retry_max_ms),
+        checkpoint_interval: Duration::from_millis(conf.download.checkpoint_ms),
+        resume: conf.download.resume,
+    };
+    run_download_cli(opts, style, Some(row.id.clone())).await
 }
 
 fn resolve_style(
