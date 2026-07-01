@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 
 mod cli;
 mod config;
+mod history;
 mod registry;
 
 #[derive(Parser)]
