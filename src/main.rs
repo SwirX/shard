@@ -1,4 +1,4 @@
-use crate::cli::style::{ColorChoice, ProgressMode, Style};
+use crate::cli::style::{ColorChoice, Style};
 use clap::{Parser, Subcommand, ValueEnum};
 use shard::engine::{DownloadManager, DownloadOptions};
 use std::io::IsTerminal;
@@ -29,8 +29,13 @@ enum Command {
         chunk_size: Option<u64>,
         #[arg(long, help = "max attempts per chunk (default: config or 5)")]
         max_attempts: Option<u32>,
-        #[arg(long, value_enum, help = "progress style (overrides shard.conf)")]
-        progress: Option<ProgressModeArg>,
+        #[arg(
+            long,
+            num_args = 0..=1,
+            default_missing_value = "true",
+            help = "prefer Nerd Font eyecandy over TTY-safe hash glyphs (overrides shard.conf)"
+        )]
+        eyecandy: Option<bool>,
         #[arg(long, value_enum, help = "colorize output (overrides shard.conf)")]
         color: Option<ColorArg>,
     },
@@ -65,21 +70,6 @@ enum ConfigAction {
     },
     Edit,
     Keys,
-}
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum ProgressModeArg {
-    Plain,
-    Nerd,
-}
-
-impl From<ProgressModeArg> for ProgressMode {
-    fn from(value: ProgressModeArg) -> Self {
-        match value {
-            ProgressModeArg::Plain => ProgressMode::Plain,
-            ProgressModeArg::Nerd => ProgressMode::Nerd,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -120,13 +110,13 @@ async fn main() -> anyhow::Result<()> {
             output,
             chunk_size,
             max_attempts,
-            progress,
+            eyecandy,
             color,
         } => {
             let dest_dir = output.unwrap_or_else(|| {
                 std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
             });
-            let style = resolve_style(progress.map(Into::into), color.map(Into::into))?;
+            let style = resolve_style(eyecandy, color.map(Into::into))?;
             let conf = config::Config::load()?;
             let opts = DownloadOptions {
                 url,
@@ -188,8 +178,7 @@ async fn resume_cli(id: &str) -> anyhow::Result<()> {
         resume: true,
     };
     println!("relaunching {} (partial data resumes via sidecar)", entry.id);
-    run_download_cli(opts, Style::with_color(false, ProgressMode::Plain), Some(entry.id.clone()))
-        .await
+    run_download_cli(opts, Style::new(false, false), Some(entry.id.clone())).await
 }
 
 fn send_control(id: &str, command: crate::cli::control::ControlCommand) -> anyhow::Result<()> {
@@ -353,19 +342,19 @@ async fn run_download_cli(
 }
 
 fn resolve_style(
-    progress_flag: Option<ProgressMode>,
+    eyecandy_flag: Option<bool>,
     color_flag: Option<ColorChoice>,
 ) -> anyhow::Result<Style> {
     let is_tty = std::io::stdout().is_terminal();
     let conf = config::Config::load()?;
-    let mode = progress_flag
-        .or(Some(conf.style.progress))
-        .unwrap_or(ProgressMode::Plain);
+    let eyecandy = eyecandy_flag
+        .or(Some(conf.style.prefer_eyecandy))
+        .unwrap_or(false);
     let color_on = color_flag
         .or(Some(conf.style.color))
         .map(|choice| choice.resolves_to(is_tty))
         .unwrap_or(is_tty);
-    Ok(Style::with_color(color_on, mode))
+    Ok(Style::new(color_on, eyecandy))
 }
 
 fn show_config() -> anyhow::Result<()> {
@@ -382,7 +371,11 @@ fn show_config() -> anyhow::Result<()> {
         .color
         .resolves_to(is_tty);
     println!("color: {} ({})", conf.style.color, if color_on { "on" } else { "off" });
-    println!("progress style: {}", conf.style.progress);
+    if conf.style.prefer_eyecandy {
+        println!("eyecandy: yes (Nerd Font glyphs; needs a Nerd Font terminal)");
+    } else {
+        println!("eyecandy: no (TTY-safe hash/ascii glyphs)");
+    }
     let d = &conf.download;
     println!("download:");
     println!("  connections = {}", d.connections);

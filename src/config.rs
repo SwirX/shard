@@ -1,4 +1,4 @@
-use crate::cli::style::{ColorChoice, ProgressMode};
+use crate::cli::style::ColorChoice;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -15,15 +15,15 @@ pub struct Config {
 pub struct StyleSection {
     #[serde(default = "default_color")]
     pub color: ColorChoice,
-    #[serde(default = "default_progress")]
-    pub progress: ProgressMode,
+    #[serde(rename = "prefer-eyecandy", default = "default_prefer_eyecandy")]
+    pub prefer_eyecandy: bool,
 }
 
 impl Default for StyleSection {
     fn default() -> Self {
         Self {
             color: default_color(),
-            progress: default_progress(),
+            prefer_eyecandy: default_prefer_eyecandy(),
         }
     }
 }
@@ -32,8 +32,8 @@ fn default_color() -> ColorChoice {
     ColorChoice::Auto
 }
 
-fn default_progress() -> ProgressMode {
-    ProgressMode::Plain
+fn default_prefer_eyecandy() -> bool {
+    false
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -170,7 +170,7 @@ impl Config {
     pub fn keys() -> [&'static str; 9] {
         [
             "color",
-            "progress",
+            "prefer-eyecandy",
             "connections",
             "chunk_size",
             "max_attempts",
@@ -210,7 +210,7 @@ fn parse_set_value<'a>(
     value: &str,
 ) -> std::io::Result<(Section, &'a str, toml::Value)> {
     let (section, field): (Section, &str) = match key {
-        "color" | "progress" => (Section::Style, key),
+        "color" | "prefer-eyecandy" => (Section::Style, key),
         "connections" | "chunk_size" | "max_attempts" | "retry_base_ms" | "retry_max_ms"
         | "checkpoint_ms" | "resume" => (Section::Download, key),
         _ => {
@@ -224,8 +224,8 @@ fn parse_set_value<'a>(
         "color" => {
             parse_enum(value, &["auto", "always", "never"], "color must be auto, always, or never")?
         }
-        "progress" => parse_enum(value, &["plain", "nerd"], "progress must be plain or nerd")?,
-        "resume" => toml::Value::Boolean(parse_bool(value)?),
+        "prefer-eyecandy" => toml::Value::Boolean(parse_bool(value, field)?),
+        "resume" => toml::Value::Boolean(parse_bool(value, field)?),
         _ => toml::Value::Integer(parse_positive(value, field)?),
     };
     Ok((section, field, parsed))
@@ -238,12 +238,12 @@ fn parse_enum(value: &str, allowed: &[&str], hint: &str) -> std::io::Result<toml
     Ok(toml::Value::String(value.to_string()))
 }
 
-fn parse_bool(value: &str) -> std::io::Result<bool> {
+fn parse_bool(value: &str, field: &str) -> std::io::Result<bool> {
     match value {
         "true" | "yes" | "on" | "1" => Ok(true),
         "false" | "no" | "off" | "0" => Ok(false),
         other => Err(std::io::Error::other(format!(
-            "resume must be true or false, got {other:?}"
+            "{field} must be true or false, got {other:?}"
         ))),
     }
 }
@@ -278,8 +278,8 @@ const SHARD_CONF_SAMPLE: &str = r#"# shard.conf - at ~/.config/shard/shard.conf 
 # Every key is optional; omitted keys fall back to the built-in defaults shown here.
 
 [style]
-color = "auto"      # auto | always | never
-progress = "plain"  # plain | nerd
+color = "auto"         # auto | always | never
+prefer-eyecandy = false # false = TTY-safe hash/ascii glyphs; true = Nerd Font blocks
 
 [download]
 connections = 8
@@ -311,7 +311,7 @@ mod tests {
     fn absent_file_yields_builtin_defaults() {
         let config = Config::load_from(&scratch()).unwrap();
         assert_eq!(config.style.color, ColorChoice::Auto);
-        assert_eq!(config.style.progress, ProgressMode::Plain);
+        assert!(!config.style.prefer_eyecandy);
         assert_eq!(config.download.connections, 8);
         assert_eq!(config.download.chunk_size, 8 * 1024 * 1024);
         assert!(config.download.resume);
@@ -348,10 +348,10 @@ mod tests {
     fn set_then_load_round_trips() {
         let path = scratch();
         Config::set_at(&path, "chunk_size", "4194304").unwrap();
-        Config::set_at(&path, "progress", "nerd").unwrap();
+        Config::set_at(&path, "prefer-eyecandy", "true").unwrap();
         let config = Config::load_from(&path).unwrap();
         assert_eq!(config.download.chunk_size, 4 * 1024 * 1024);
-        assert_eq!(config.style.progress, ProgressMode::Nerd);
+        assert!(config.style.prefer_eyecandy);
     }
 
     #[test]
@@ -376,5 +376,6 @@ mod tests {
         let config: Config = toml::from_str(SHARD_CONF_SAMPLE).unwrap();
         assert_eq!(config.download.connections, 8);
         assert_eq!(config.style.color, ColorChoice::Auto);
+        assert!(!config.style.prefer_eyecandy);
     }
 }

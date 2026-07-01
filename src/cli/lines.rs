@@ -98,7 +98,6 @@ fn worker_minibar(ratio: f64, style: &Style) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::style::ProgressMode;
     use shard::engine::progress::ProgressEvent;
 
     fn tracker(events: Vec<ProgressEvent>) -> ProgressTracker {
@@ -122,7 +121,7 @@ mod tests {
             ProgressEvent::ChunkAdvanced { worker: 0, index: 0, written: 100 },
             ProgressEvent::ChunkComplete { worker: 0, index: 0 },
         ]);
-        let style = Style::with_color(false, ProgressMode::Plain);
+        let style = Style::new(false, false);
         let text = summary_line(&tracker, &style, &stats(), 60);
         assert!(text.contains("10.0%"), "done={} text={text}", tracker.done_bytes());
         assert!(text.contains("chunks 1/"), "one chunk marked done");
@@ -131,7 +130,7 @@ mod tests {
     #[test]
     fn plain_summary_uses_ascii_glyphs() {
         let tracker = tracker(vec![ProgressEvent::Start { total: 100, chunk_size: 100 }]);
-        let style = Style::with_color(false, ProgressMode::Plain);
+        let style = Style::new(false, false);
         let text = summary_line(&tracker, &style, &stats(), 10);
         assert!(text.starts_with("> "), "plain download glyph is >");
     }
@@ -143,7 +142,7 @@ mod tests {
             ProgressEvent::ChunkStarted { worker: 1, index: 2 },
             ProgressEvent::ChunkAdvanced { worker: 1, index: 2, written: 500 },
         ]);
-        let style = Style::with_color(false, ProgressMode::Nerd);
+        let style = Style::new(false, true);
         let lines = worker_lines(&tracker, &style, 3);
         assert_eq!(lines.len(), 3);
         assert!(lines[1].contains("W1"));
@@ -159,7 +158,7 @@ mod tests {
             ProgressEvent::Start { total: 1000, chunk_size: 100 },
             ProgressEvent::ChunkStarted { worker: 0, index: 0 },
         ]);
-        let style = Style::with_color(true, ProgressMode::Plain);
+        let style = Style::new(true, false);
         let lines = worker_lines(&tracker, &style, 2);
         assert_ne!(lines[0], lines[1]);
         assert!(lines[0].contains("\x1b["));
