@@ -214,7 +214,7 @@ mod tests {
 
     #[test]
     fn toggle_switches_views() {
-        let mut renderer = Renderer::new(Style::with_color(false, crate::cli::style::ProgressMode::Plain), 2);
+        let mut renderer = Renderer::new(Style::new(false, false), 2);
         assert_eq!(renderer.view, View::Bar);
         renderer.handle_key(KeyCommand::ToggleView);
         assert_eq!(renderer.view, View::Workers);
@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     fn hint_only_in_bar_view_before_first_toggle() {
-        let style = Style::with_color(false, crate::cli::style::ProgressMode::Plain);
+        let style = Style::new(false, false);
         let stats = FrameStats { started_at: Instant::now(), last_paint_at: Instant::now() };
         let mut renderer = Renderer::new(style, 2);
         let lines = renderer.compose_lines(&stats);
@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn finish_switches_back_to_the_bar_view() {
         let mut renderer = Renderer::new(
-            Style::with_color(false, crate::cli::style::ProgressMode::Plain),
+            Style::new(false, false),
             2,
         );
         renderer.handle_key(KeyCommand::ToggleView);
