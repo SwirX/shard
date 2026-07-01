@@ -30,6 +30,17 @@ pub struct DownloadOptions {
     pub retry_max_delay: Duration,
     pub checkpoint_interval: Duration,
     pub resume: bool,
+    /// When set, the destination is resolved as `<dest_path>/<category>/<name>`
+    /// with the category picked from the file extension.
+    pub routing: Option<FiletypeRouting>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FiletypeRouting {
+    /// category name -> directory leaf under the base download dir
+    pub dirs: std::collections::BTreeMap<String, String>,
+    /// leaf used when the extension matches no known category
+    pub other: String,
 }
 
 impl Default for DownloadOptions {
@@ -44,6 +55,7 @@ impl Default for DownloadOptions {
             retry_max_delay: Duration::from_secs(30),
             checkpoint_interval: Duration::from_secs(3),
             resume: true,
+            routing: None,
         }
     }
 }
@@ -366,6 +378,26 @@ fn manifest_template(
 }
 
 fn resolve_destination(options: &DownloadOptions, metadata: &RemoteMetadata) -> PathBuf {
+    if let Some(routing) = &options.routing {
+        let file_name = metadata
+            .content_disposition
+            .as_deref()
+            .and_then(parse_content_disposition_filename)
+            .or_else(|| url_basename(&metadata.final_url))
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "download.bin".to_string());
+        let category = filetype_category(&file_name);
+        let leaf = routing
+            .dirs
+            .get(category)
+            .map(String::as_str)
+            .unwrap_or(&routing.other);
+        let dir = options.dest_path.join(leaf);
+        if !dir.exists() {
+            let _ = std::fs::create_dir_all(&dir);
+        }
+        return dir.join(file_name);
+    }
     let wants_dir = options.dest_path.is_dir()
         || options
             .dest_path
@@ -387,6 +419,40 @@ fn resolve_destination(options: &DownloadOptions, metadata: &RemoteMetadata) -> 
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| "download.bin".to_string());
     dir.join(name)
+}
+
+fn filetype_category(name: &str) -> &'static str {
+    let extension = name
+        .rsplit_once('.')
+        .map(|(_, ext)| ext)
+        .unwrap_or(name)
+        .to_ascii_lowercase();
+    const VIDEO: &[&str] = &[
+        "mp4", "mkv", "avi", "mov", "webm", "m4v", "flv", "wmv", "mpg", "mpeg",
+    ];
+    const IMAGE: &[&str] = &[
+        "jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "heic", "avif", "ico", "tiff",
+    ];
+    const AUDIO: &[&str] = &["mp3", "wav", "flac", "ogg", "m4a", "aac", "opus", "wma"];
+    const ARCHIVE: &[&str] = &[
+        "zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar", "zst", "iso",
+    ];
+    const DOCUMENT: &[&str] = &[
+        "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "md", "odt", "ods", "epub",
+    ];
+    if VIDEO.contains(&extension.as_str()) {
+        "video"
+    } else if IMAGE.contains(&extension.as_str()) {
+        "image"
+    } else if AUDIO.contains(&extension.as_str()) {
+        "audio"
+    } else if ARCHIVE.contains(&extension.as_str()) {
+        "archive"
+    } else if DOCUMENT.contains(&extension.as_str()) {
+        "document"
+    } else {
+        "other"
+    }
 }
 
 fn parse_content_disposition_filename(value: &str) -> Option<String> {
@@ -544,6 +610,50 @@ mod tests {
         assert_eq!(
             resolve_destination(&options, &metadata),
             PathBuf::from("/tmp/out/result.bin")
+        );
+    }
+
+    #[test]
+    fn filetype_category_classifies_known_extensions() {
+        assert_eq!(filetype_category("movie.mp4"), "video");
+        assert_eq!(filetype_category("PIC.JPG"), "image");
+        assert_eq!(filetype_category("song.flac"), "audio");
+        assert_eq!(filetype_category("backup.tar.gz"), "archive");
+        assert_eq!(filetype_category("resume.pdf"), "document");
+        assert_eq!(filetype_category("mystery.xyz"), "other");
+        assert_eq!(filetype_category("noext"), "other");
+    }
+
+    #[test]
+    fn resolve_destination_routes_by_extension_under_base_dir() {
+        let options = DownloadOptions {
+            url: "http://x".into(),
+            dest_path: PathBuf::from("/tmp/shard-route-destination"),
+            chunk_size: 1024,
+            connections: 1,
+            max_attempts: 2,
+            routing: Some(FiletypeRouting {
+                dirs: [
+                    ("video".to_string(), "Videos".to_string()),
+                    ("document".to_string(), "Documents".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                other: "Other".to_string(),
+            }),
+            ..Default::default()
+        };
+        let metadata = RemoteMetadata {
+            final_url: "http://x/movie.mp4".into(),
+            size: 10,
+            etag: None,
+            last_modified: None,
+            accepts_ranges: true,
+            content_disposition: None,
+        };
+        assert_eq!(
+            resolve_destination(&options, &metadata),
+            PathBuf::from("/tmp/shard-route-destination/Videos/movie.mp4")
         );
     }
 
