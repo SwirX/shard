@@ -1,13 +1,14 @@
 use crate::cli::style::{ColorChoice, ProgressMode, Style};
 use clap::{Parser, Subcommand, ValueEnum};
 use shard::engine::{DownloadManager, DownloadOptions};
-use std::io::{IsTerminal, Write};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
 mod cli;
 mod config;
+mod registry;
 
 #[derive(Parser)]
 #[command(name = "shard", version, about = "Native concurrent HTTP range download engine")]
@@ -36,6 +37,19 @@ enum Command {
     Config {
         #[command(subcommand)]
         action: ConfigAction,
+    },
+    List,
+    Status {
+        id: Option<String>,
+    },
+    Pause {
+        id: String,
+    },
+    Resume {
+        id: String,
+    },
+    Cancel {
+        id: String,
     },
 }
 
@@ -125,56 +139,216 @@ async fn main() -> anyhow::Result<()> {
                 checkpoint_interval: Duration::from_millis(conf.download.checkpoint_ms),
                 resume: conf.download.resume,
             };
-            let manager = DownloadManager::new()?;
-            let (progress_tx, progress_rx) = mpsc::channel(1024);
-            let (key_tx, key_rx) = mpsc::channel(64);
-            if let Some(keys) = crate::cli::keys::spawn_key_listener(key_tx.clone()) {
-                let renderer = tokio::spawn(crate::cli::render::run_progress_renderer(
-                    progress_rx,
-                    key_rx,
-                    style,
-                    opts.connections,
-                ));
-                let result = manager.download(&opts, Some(progress_tx)).await;
-                drop(key_tx);
-                let _ = renderer.await;
-                let _ = keys.await;
-                let outcome = result?;
-                println!();
-                println!(
-                    "saved {} bytes -> {}",
-                    outcome.size,
-                    outcome.dest_path.display()
-                );
-                println!("sha256 {}", outcome.sha256);
-                if interactive() {
-                    prompt_enter()?;
-                }
-            } else {
-                let result = manager.download(&opts, Some(progress_tx)).await;
-                let outcome = result?;
-                println!(
-                    "saved {} bytes -> {}",
-                    outcome.size,
-                    outcome.dest_path.display()
-                );
-                println!("sha256 {}", outcome.sha256);
-            }
+            run_download_cli(opts, style, None).await?;
         }
+        Command::List => list_cli()?,
+        Command::Status { id } => status_cli(id.as_deref())?,
+        Command::Pause { id } => {
+            send_control(&id, crate::cli::control::ControlCommand::Pause)?;
+            println!("paused {id}");
+        }
+        Command::Cancel { id } => {
+            send_control(&id, crate::cli::control::ControlCommand::Cancel)?;
+            println!("cancelled {id}");
+        }
+        Command::Resume { id } => resume_cli(&id).await?,
     }
     Ok(())
 }
 
-fn interactive() -> bool {
-    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+async fn resume_cli(id: &str) -> anyhow::Result<()> {
+    let store = registry::Registry::load();
+    let entry = store
+        .by_id_or_url(id)
+        .ok_or_else(|| anyhow::anyhow!("no download matches {id:?}"))?;
+    let socket = registry::socket_path(&entry.id);
+    if let Some(reply) = crate::cli::control::probe(&socket) {
+        if reply == "cancelled" {
+            println!("{} is already cancelled; use `shard resume` later to relaunch", entry.id);
+            return Ok(());
+        }
+        crate::cli::control::send(&socket, crate::cli::control::ControlCommand::Resume)?;
+        println!("resumed {} (live process says: {reply})", entry.id);
+        return Ok(());
+    }
+    let conf = config::Config::load()?;
+    let dest = entry
+        .final_dest
+        .clone()
+        .unwrap_or_else(|| entry.dest.clone());
+    let opts = DownloadOptions {
+        url: entry.url.clone(),
+        dest_path: dest,
+        chunk_size: conf.download.chunk_size,
+        connections: conf.download.connections,
+        max_attempts: conf.download.max_attempts,
+        retry_base_delay: Duration::from_millis(conf.download.retry_base_ms),
+        retry_max_delay: Duration::from_millis(conf.download.retry_max_ms),
+        checkpoint_interval: Duration::from_millis(conf.download.checkpoint_ms),
+        resume: true,
+    };
+    println!("relaunching {} (partial data resumes via sidecar)", entry.id);
+    run_download_cli(opts, Style::with_color(false, ProgressMode::Plain), Some(entry.id.clone()))
+        .await
 }
 
-fn prompt_enter() -> std::io::Result<()> {
-    use std::io::BufRead;
-    print!("Press Enter to continue...");
-    std::io::stdout().flush()?;
-    let mut line = String::new();
-    std::io::stdin().lock().read_line(&mut line)?;
+fn send_control(id: &str, command: crate::cli::control::ControlCommand) -> anyhow::Result<()> {
+    let store = registry::Registry::load();
+    let entry = store
+        .by_id_or_url(id)
+        .ok_or_else(|| anyhow::anyhow!("no download matches {id:?}"))?;
+    let socket = registry::socket_path(&entry.id);
+    crate::cli::control::send(&socket, command)?;
+    Ok(())
+}
+
+fn list_cli() -> anyhow::Result<()> {
+    let store = registry::Registry::load();
+    if store.entries.is_empty() {
+        println!("no downloads registered yet");
+        return Ok(());
+    }
+    println!("{:<22} {:<11} {:<7} DEST", "ID", "STATUS", "LIVE");
+    for entry in store.entries.iter().rev() {
+        let live = match crate::cli::control::probe(&registry::socket_path(&entry.id)) {
+            Some(reply) => match reply.as_str() {
+                "cancelled" | "ok" => "off".to_string(),
+                other => other.to_string(),
+            },
+            None => "-".to_string(),
+        };
+        let dest = entry.final_dest.as_ref().unwrap_or(&entry.dest);
+        println!(
+            "{:<22} {:<11} {:<7} {}",
+            entry.id,
+            entry.status,
+            live,
+            dest.display()
+        );
+    }
+    Ok(())
+}
+
+fn status_cli(id: Option<&str>) -> anyhow::Result<()> {
+    let store = registry::Registry::load();
+    let needle = match id {
+        Some(id) => id.to_string(),
+        None => {
+            let active = store.active().last().map(|entry| entry.id.clone());
+            match active {
+                Some(id) => id,
+                None => {
+                    println!("no active downloads; use `shard list` to see history");
+                    return Ok(());
+                }
+            }
+        }
+    };
+    let entry = store
+        .by_id_or_url(&needle)
+        .ok_or_else(|| anyhow::anyhow!("no download matches {needle:?}"))?;
+    let socket = registry::socket_path(&entry.id);
+    let live = match crate::cli::control::probe(&socket) {
+        Some(reply) => format!("running ({reply})"),
+        None => "not running".to_string(),
+    };
+    println!("id:       {}", entry.id);
+    println!("url:      {}", entry.url);
+    println!("dest:     {}", entry.final_dest.as_ref().unwrap_or(&entry.dest).display());
+    println!("status:   {} ({live})", entry.status);
+    println!("pid:      {}", entry.pid);
+    println!("started:  {}", entry.started_at);
+    println!("updated:  {}", entry.updated_at);
+    if entry.status != registry::EntryStatus::Completed {
+        println!("hint:     `shard resume {}` to continue where it left off", entry.id);
+    }
+    Ok(())
+}
+
+async fn run_download_cli(
+    opts: DownloadOptions,
+    style: Style,
+    reuse_id: Option<String>,
+) -> anyhow::Result<()> {
+    let id = match reuse_id {
+        Some(id) => id,
+        None => registry::new_id(),
+    };
+    let socket = registry::socket_path(&id);
+    let store = registry::Registry::load();
+    let entry = registry::Entry {
+        id: id.clone(),
+        url: opts.url.clone(),
+        dest: opts.dest_path.clone(),
+        final_dest: None,
+        status: registry::EntryStatus::Downloading,
+        pid: std::process::id(),
+        started_at: registry::iso_now(),
+        updated_at: registry::iso_now(),
+    };
+    store.add(&entry)?;
+    println!("download {id} -> {}", opts.dest_path.display());
+    println!("  control via: shard status|pause|resume|cancel {id}");
+    let manager = DownloadManager::new()?;
+    let (progress_tx, progress_rx) = mpsc::channel(1024);
+    let (key_tx, key_rx) = mpsc::channel(64);
+    let mut handle = manager.start(&opts, Some(progress_tx))?;
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let serve_socket = socket.clone();
+    let serve_controller = handle.controller.clone();
+    let socket_task = tokio::spawn(async move {
+        let _ = shard::engine::sockets::serve(&serve_socket, serve_controller, shutdown_rx).await;
+    });
+    let renderer = if let Some(keys) = crate::cli::keys::spawn_key_listener(key_tx.clone()) {
+        let renderer = tokio::spawn(crate::cli::render::run_progress_renderer(
+            progress_rx,
+            key_rx,
+            style,
+            opts.connections,
+        ));
+        Some((renderer, keys))
+    } else {
+        None
+    };
+
+    let outcome = match handle.wait().await {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            drop(key_tx);
+            let _ = store.update(&id, |entry| entry.status = registry::EntryStatus::Failed);
+            shutdown_tx.send(true).ok();
+            drop(socket_task);
+            return Err(anyhow::anyhow!("{err}"));
+        }
+    };
+    shutdown_tx.send(true).ok();
+    drop(socket_task);
+    let (renderer, keys) = match renderer {
+        Some((renderer, keys)) => (Some(renderer), Some(keys)),
+        None => (None, None),
+    };
+    drop(key_tx);
+    if let Some(renderer) = renderer {
+        let _ = renderer.await;
+    }
+    if let Some(keys) = keys {
+        let _ = keys.await;
+    }
+    let status = if outcome.status == shard::engine::OutcomeStatus::Cancelled {
+        registry::EntryStatus::Cancelled
+    } else {
+        registry::EntryStatus::Completed
+    };
+    store.update(&id, |entry| {
+        entry.status = status;
+        entry.final_dest = Some(outcome.dest_path.clone());
+        entry.dest = outcome.dest_path.clone();
+    })?;
+    println!();
+    println!("saved {} bytes -> {}", outcome.size, outcome.dest_path.display());
+    if !outcome.sha256.is_empty() {
+        println!("sha256 {}", outcome.sha256);
+    }
     Ok(())
 }
 
