@@ -4,6 +4,12 @@ pub struct Sha256Hasher {
     inner: Sha256,
 }
 
+impl Default for Sha256Hasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Sha256Hasher {
     pub fn new() -> Self {
         Self {
