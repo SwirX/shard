@@ -23,4 +23,4 @@ mod tests_pool;
 
 pub use control::Controller;
 pub use error::{DownloadError, DownloadResult};
-pub use manager::{DownloadHandle, DownloadManager, DownloadOptions, DownloadOutcome, OutcomeStatus};
+pub use manager::{DownloadHandle, DownloadManager, DownloadOptions, DownloadOutcome, FiletypeRouting, OutcomeStatus};

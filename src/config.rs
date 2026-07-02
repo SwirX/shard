@@ -9,6 +9,8 @@ pub struct Config {
     pub style: StyleSection,
     #[serde(default)]
     pub download: DownloadSection,
+    #[serde(default)]
+    pub filetype: FiletypeSection,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -36,7 +38,7 @@ fn default_prefer_eyecandy() -> bool {
     false
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadSection {
     #[serde(default = "default_connections")]
     pub connections: usize,
@@ -52,6 +54,8 @@ pub struct DownloadSection {
     pub checkpoint_ms: u64,
     #[serde(default = "default_resume")]
     pub resume: bool,
+    #[serde(default = "default_download_dir")]
+    pub download_dir: String,
 }
 
 impl Default for DownloadSection {
@@ -64,6 +68,36 @@ impl Default for DownloadSection {
             retry_max_ms: default_retry_max_ms(),
             checkpoint_ms: default_checkpoint_ms(),
             resume: default_resume(),
+            download_dir: default_download_dir(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FiletypeSection {
+    #[serde(default = "default_video_dir")]
+    pub video: String,
+    #[serde(default = "default_image_dir")]
+    pub image: String,
+    #[serde(default = "default_audio_dir")]
+    pub audio: String,
+    #[serde(default = "default_archive_dir")]
+    pub archive: String,
+    #[serde(default = "default_document_dir")]
+    pub document: String,
+    #[serde(default = "default_other_dir")]
+    pub other: String,
+}
+
+impl Default for FiletypeSection {
+    fn default() -> Self {
+        Self {
+            video: default_video_dir(),
+            image: default_image_dir(),
+            audio: default_audio_dir(),
+            archive: default_archive_dir(),
+            document: default_document_dir(),
+            other: default_other_dir(),
         }
     }
 }
@@ -94,6 +128,49 @@ fn default_checkpoint_ms() -> u64 {
 
 fn default_resume() -> bool {
     true
+}
+
+fn default_download_dir() -> String {
+    let base = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let mut candidate = base.join("Downloads");
+    if let Ok(dirs) = std::fs::read_to_string(base.join(".config").join("user-dirs.dirs"))
+        && let Some(line) = dirs
+            .lines()
+            .find_map(|line| line.strip_prefix("XDG_DOWNLOAD_DIR="))
+    {
+        let expanded = line
+            .trim()
+            .trim_matches('"')
+            .replace("$HOME", base.to_str().unwrap_or(""));
+        if !expanded.is_empty() {
+            candidate = PathBuf::from(expanded);
+        }
+    }
+    candidate.to_string_lossy().to_string()
+}
+
+fn default_video_dir() -> String {
+    "Videos".to_string()
+}
+
+fn default_image_dir() -> String {
+    "Images".to_string()
+}
+
+fn default_audio_dir() -> String {
+    "Audio".to_string()
+}
+
+fn default_archive_dir() -> String {
+    "Archives".to_string()
+}
+
+fn default_document_dir() -> String {
+    "Documents".to_string()
+}
+
+fn default_other_dir() -> String {
+    "Other".to_string()
 }
 
 impl Config {
@@ -167,7 +244,7 @@ impl Config {
         Ok(())
     }
 
-    pub fn keys() -> [&'static str; 9] {
+    pub fn keys() -> [&'static str; 16] {
         [
             "color",
             "prefer-eyecandy",
@@ -178,6 +255,13 @@ impl Config {
             "retry_max_ms",
             "checkpoint_ms",
             "resume",
+            "download_dir",
+            "filetype.video",
+            "filetype.image",
+            "filetype.audio",
+            "filetype.archive",
+            "filetype.document",
+            "filetype.other",
         ]
     }
 }
@@ -194,6 +278,7 @@ pub fn config_path() -> PathBuf {
 enum Section {
     Style,
     Download,
+    Filetype,
 }
 
 impl Section {
@@ -201,6 +286,7 @@ impl Section {
         match self {
             Section::Style => "style",
             Section::Download => "download",
+            Section::Filetype => "filetype",
         }
     }
 }
@@ -212,7 +298,11 @@ fn parse_set_value<'a>(
     let (section, field): (Section, &str) = match key {
         "color" | "prefer-eyecandy" => (Section::Style, key),
         "connections" | "chunk_size" | "max_attempts" | "retry_base_ms" | "retry_max_ms"
-        | "checkpoint_ms" | "resume" => (Section::Download, key),
+        | "checkpoint_ms" | "resume" | "download_dir" => (Section::Download, key),
+        "filetype.video" | "filetype.image" | "filetype.audio" | "filetype.archive"
+        | "filetype.document" | "filetype.other" => {
+            (Section::Filetype, key.strip_prefix("filetype.").unwrap_or(key))
+        }
         _ => {
             return Err(std::io::Error::other(format!(
                 "unknown key {key:?}; pick one of: {}",
@@ -226,7 +316,9 @@ fn parse_set_value<'a>(
         }
         "prefer-eyecandy" => toml::Value::Boolean(parse_bool(value, field)?),
         "resume" => toml::Value::Boolean(parse_bool(value, field)?),
-        _ => toml::Value::Integer(parse_positive(value, field)?),
+        "connections" | "chunk_size" | "max_attempts" | "retry_base_ms" | "retry_max_ms"
+        | "checkpoint_ms" => toml::Value::Integer(parse_positive(value, field)?),
+        _ => toml::Value::String(value.to_string()),
     };
     Ok((section, field, parsed))
 }
@@ -289,6 +381,15 @@ retry_base_ms = 500
 retry_max_ms = 30000
 checkpoint_ms = 3000
 resume = true
+download_dir = "~/Downloads" # base dir when -o is omitted; ~ is expanded
+
+[filetype]
+video = "Videos"
+image = "Images"
+audio = "Audio"
+archive = "Archives"
+document = "Documents"
+other = "Other"
 "#;
 
 #[cfg(test)]
@@ -377,5 +478,20 @@ mod tests {
         assert_eq!(config.download.connections, 8);
         assert_eq!(config.style.color, ColorChoice::Auto);
         assert!(!config.style.prefer_eyecandy);
+        assert_eq!(config.download.download_dir, "~/Downloads");
+        assert_eq!(config.filetype.video, "Videos");
+        assert_eq!(config.filetype.other, "Other");
+        assert_eq!(config.filetype.document, "Documents");
+    }
+
+    #[test]
+    fn download_dir_and_filetype_setting_round_trip() {
+        let path = scratch();
+        Config::set_at(&path, "download_dir", "/home/me/Shared").unwrap();
+        Config::set_at(&path, "filetype.video", "Movies").unwrap();
+        let config = Config::load_from(&path).unwrap();
+        assert_eq!(config.download.download_dir, "/home/me/Shared");
+        assert_eq!(config.filetype.video, "Movies");
+        assert_eq!(config.filetype.image, "Images");
     }
 }

@@ -21,10 +21,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Download {
-        url: String,
+        #[arg(help = "URL; when omitted, read from clipboard (wl-paste/xclip/xsel)")]
+        url: Option<String>,
         #[arg(short, long, help = "number of concurrent workers (default: config or 8)")]
         connections: Option<usize>,
-        #[arg(short, long, help = "output path or directory (defaults to current directory)")]
+        #[arg(short, long, help = "output path or directory (defaults to download dir)")]
         output: Option<PathBuf>,
         #[arg(long, help = "chunk size in bytes (default: config or 8 MiB)")]
         chunk_size: Option<u64>,
@@ -119,14 +120,37 @@ async fn main() -> anyhow::Result<()> {
             eyecandy,
             color,
         } => {
-            let dest_dir = output.unwrap_or_else(|| {
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-            });
+            let url = match url {
+                Some(url) => url,
+                None => clipboard_url()?,
+            };
             let style = resolve_style(eyecandy, color.map(Into::into))?;
             let conf = config::Config::load()?;
+            let (dest_path, routing) = if let Some(output) = output {
+                (output, None)
+            } else {
+                let base = expand_tilde(&conf.download.download_dir);
+                (
+                    base.clone(),
+                    Some(shard::engine::FiletypeRouting {
+                        dirs: [
+                            ("video", conf.filetype.video.as_str()),
+                            ("image", conf.filetype.image.as_str()),
+                            ("audio", conf.filetype.audio.as_str()),
+                            ("archive", conf.filetype.archive.as_str()),
+                            ("document", conf.filetype.document.as_str()),
+                            ("other", conf.filetype.other.as_str()),
+                        ]
+                        .into_iter()
+                        .map(|(category, leaf)| (category.to_string(), leaf.to_string()))
+                        .collect(),
+                        other: conf.filetype.other.clone(),
+                    }),
+                )
+            };
             let opts = DownloadOptions {
                 url,
-                dest_path: dest_dir,
+                dest_path,
                 chunk_size: chunk_size.unwrap_or(conf.download.chunk_size),
                 connections: connections.unwrap_or(conf.download.connections),
                 max_attempts: max_attempts.unwrap_or(conf.download.max_attempts),
@@ -134,6 +158,7 @@ async fn main() -> anyhow::Result<()> {
                 retry_max_delay: Duration::from_millis(conf.download.retry_max_ms),
                 checkpoint_interval: Duration::from_millis(conf.download.checkpoint_ms),
                 resume: conf.download.resume,
+                routing,
             };
             run_download_cli(opts, style, None).await?;
         }
@@ -184,6 +209,7 @@ async fn resume_cli(id: &str) -> anyhow::Result<()> {
         retry_max_delay: Duration::from_millis(conf.download.retry_max_ms),
         checkpoint_interval: Duration::from_millis(conf.download.checkpoint_ms),
         resume: true,
+        routing: None,
     };
     println!("relaunching {} (partial data resumes via sidecar)", entry.id);
     run_download_cli(opts, Style::new(false, false), Some(entry.id.clone())).await
@@ -442,8 +468,47 @@ async fn redo_cli(id_or_url: &str) -> anyhow::Result<()> {
         retry_max_delay: Duration::from_millis(conf.download.retry_max_ms),
         checkpoint_interval: Duration::from_millis(conf.download.checkpoint_ms),
         resume: conf.download.resume,
+        routing: None,
     };
     run_download_cli(opts, style, Some(row.id.clone())).await
+}
+
+fn clipboard_url() -> anyhow::Result<String> {
+    let candidates = [
+        ("wl-paste", &["wl-paste", "--no-newline"][..]),
+        ("xclip", &["xclip", "-selection", "clipboard", "-o"][..]),
+        ("xsel", &["xsel", "--clipboard", "--output"][..]),
+    ];
+    for (name, args) in candidates {
+        let Ok(output) = std::process::Command::new(name).args(args).output() else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if is_http_url(&text) {
+            return Ok(text);
+        }
+        return Err(anyhow::anyhow!(
+            "clipboard ({name}) does not contain a URL: {text:?}"
+        ));
+    }
+    Err(anyhow::anyhow!(
+        "no clipboard tool found (tried wl-paste, xclip, xsel) and no URL given"
+    ))
+}
+
+fn is_http_url(text: &str) -> bool {
+    text.starts_with("http://") || text.starts_with("https://")
+}
+
+fn expand_tilde(path: &str) -> PathBuf {
+    let Some(rest) = path.strip_prefix('~') else {
+        return PathBuf::from(path);
+    };
+    let home = std::env::var_os("HOME").unwrap_or_default();
+    PathBuf::from(home).join(rest.trim_start_matches(['/', '\\']))
 }
 
 fn resolve_style(
