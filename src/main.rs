@@ -12,7 +12,11 @@ mod history;
 mod registry;
 
 #[derive(Parser)]
-#[command(name = "shard", version, about = "Native concurrent HTTP range download engine")]
+#[command(
+    name = "shard",
+    version,
+    about = "Native concurrent HTTP range download engine"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -23,9 +27,17 @@ enum Command {
     Download {
         #[arg(help = "URL; when omitted, read from clipboard (wl-paste/xclip/xsel)")]
         url: Option<String>,
-        #[arg(short, long, help = "number of concurrent workers (default: config or 8)")]
+        #[arg(
+            short,
+            long,
+            help = "number of concurrent workers (default: config or 8)"
+        )]
         connections: Option<usize>,
-        #[arg(short, long, help = "output path or directory (defaults to download dir)")]
+        #[arg(
+            short,
+            long,
+            help = "output path or directory (defaults to download dir)"
+        )]
         output: Option<PathBuf>,
         #[arg(long, help = "chunk size in bytes (default: config or 8 MiB)")]
         chunk_size: Option<u64>,
@@ -187,7 +199,10 @@ async fn resume_cli(id: &str) -> anyhow::Result<()> {
     let socket = registry::socket_path(&entry.id);
     if let Some(reply) = crate::cli::control::probe(&socket) {
         if reply == "cancelled" {
-            println!("{} is already cancelled; use `shard resume` later to relaunch", entry.id);
+            println!(
+                "{} is already cancelled; use `shard resume` later to relaunch",
+                entry.id
+            );
             return Ok(());
         }
         crate::cli::control::send(&socket, crate::cli::control::ControlCommand::Resume)?;
@@ -211,7 +226,10 @@ async fn resume_cli(id: &str) -> anyhow::Result<()> {
         resume: true,
         routing: None,
     };
-    println!("relaunching {} (partial data resumes via sidecar)", entry.id);
+    println!(
+        "relaunching {} (partial data resumes via sidecar)",
+        entry.id
+    );
     run_download_cli(opts, Style::new(false, false), Some(entry.id.clone())).await
 }
 
@@ -277,13 +295,19 @@ fn status_cli(id: Option<&str>) -> anyhow::Result<()> {
     };
     println!("id:       {}", entry.id);
     println!("url:      {}", entry.url);
-    println!("dest:     {}", entry.final_dest.as_ref().unwrap_or(&entry.dest).display());
+    println!(
+        "dest:     {}",
+        entry.final_dest.as_ref().unwrap_or(&entry.dest).display()
+    );
     println!("status:   {} ({live})", entry.status);
     println!("pid:      {}", entry.pid);
     println!("started:  {}", entry.started_at);
     println!("updated:  {}", entry.updated_at);
     if entry.status != registry::EntryStatus::Completed {
-        println!("hint:     `shard resume {}` to continue where it left off", entry.id);
+        println!(
+            "hint:     `shard resume {}` to continue where it left off",
+            entry.id
+        );
     }
     Ok(())
 }
@@ -406,7 +430,11 @@ async fn run_download_cli(
         updated_at: registry::iso_now(),
     })?;
     println!();
-    println!("saved {} bytes -> {}", outcome.size, outcome.dest_path.display());
+    println!(
+        "saved {} bytes -> {}",
+        outcome.size,
+        outcome.dest_path.display()
+    );
     if !outcome.sha256.is_empty() {
         println!("sha256 {}", outcome.sha256);
     }
@@ -420,7 +448,10 @@ fn history_cli() -> anyhow::Result<()> {
         println!("no downloads in history yet");
         return Ok(());
     }
-    println!("{:<22} {:<11} {:<10} {:<64} SRC", "ID", "STATUS", "SIZE", "DEST");
+    println!(
+        "{:<22} {:<11} {:<10} {:<64} SRC",
+        "ID", "STATUS", "SIZE", "DEST"
+    );
     for row in rows {
         let exists = if row.dest.exists() { "on-disk" } else { "gone" };
         let size = if row.size > 0 {
@@ -536,11 +567,12 @@ fn show_config() -> anyhow::Result<()> {
     }
     let conf = config::Config::load()?;
     let is_tty = std::io::stdout().is_terminal();
-    let color_on = conf
-        .style
-        .color
-        .resolves_to(is_tty);
-    println!("color: {} ({})", conf.style.color, if color_on { "on" } else { "off" });
+    let color_on = conf.style.color.resolves_to(is_tty);
+    println!(
+        "color: {} ({})",
+        conf.style.color,
+        if color_on { "on" } else { "off" }
+    );
     if conf.style.prefer_eyecandy {
         println!("eyecandy: yes (Nerd Font glyphs; needs a Nerd Font terminal)");
     } else {
@@ -549,7 +581,11 @@ fn show_config() -> anyhow::Result<()> {
     let d = &conf.download;
     println!("download:");
     println!("  connections = {}", d.connections);
-    println!("  chunk_size = {} ({:.1} MiB)", d.chunk_size, d.chunk_size as f64 / 1_048_576.0);
+    println!(
+        "  chunk_size = {} ({:.1} MiB)",
+        d.chunk_size,
+        d.chunk_size as f64 / 1_048_576.0
+    );
     println!("  max_attempts = {}", d.max_attempts);
     println!("  retry_base_ms = {}", d.retry_base_ms);
     println!("  retry_max_ms = {}", d.retry_max_ms);

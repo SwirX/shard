@@ -1,8 +1,8 @@
 use super::planner::{Chunk, ChunkPlan};
 use std::collections::VecDeque;
 use std::pin::pin;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use tokio::sync::{Mutex, Notify};
 
 pub struct ChunkDispatcher {
@@ -66,7 +66,9 @@ impl ChunkDispatcher {
                 if let Some(index) = guard.pop_front() {
                     return Some(index);
                 }
-                if self.shutdown.load(Ordering::Acquire) || self.settled.load(Ordering::Acquire) == self.total() {
+                if self.shutdown.load(Ordering::Acquire)
+                    || self.settled.load(Ordering::Acquire) == self.total()
+                {
                     return None;
                 }
             }
@@ -124,7 +126,10 @@ impl ChunkDispatcher {
     }
 
     pub fn completed_count(&self) -> usize {
-        self.completed.iter().filter(|flag| flag.load(Ordering::Acquire)).count()
+        self.completed
+            .iter()
+            .filter(|flag| flag.load(Ordering::Acquire))
+            .count()
     }
 
     pub fn is_fully_settled(&self) -> bool {
@@ -181,8 +186,16 @@ mod tests {
     async fn pre_completed_chunks_are_never_dispensed() {
         use crate::engine::planner::Chunk;
         let plan = Arc::new(ChunkPlan::from_chunks(vec![
-            Chunk { start: 0, end: 63, downloaded: 64 },
-            Chunk { start: 64, end: 127, downloaded: 0 },
+            Chunk {
+                start: 0,
+                end: 63,
+                downloaded: 64,
+            },
+            Chunk {
+                start: 64,
+                end: 127,
+                downloaded: 0,
+            },
         ]));
         let dispatcher = ChunkDispatcher::new(plan);
         assert_eq!(dispatcher.completed_count(), 1);

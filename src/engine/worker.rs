@@ -68,12 +68,14 @@ impl WorkerPool {
         let mut handles = Vec::with_capacity(self.config.connections);
         for worker_id in 0..self.config.connections {
             let worker = Arc::clone(self);
-            handles.push(tokio::spawn(async move { worker.run_worker(worker_id).await }));
+            handles.push(tokio::spawn(
+                async move { worker.run_worker(worker_id).await },
+            ));
         }
         for handle in handles {
-            handle
-                .await
-                .map_err(|join_err| DownloadError::Io(std::io::Error::other(join_err.to_string())))?;
+            handle.await.map_err(|join_err| {
+                DownloadError::Io(std::io::Error::other(join_err.to_string()))
+            })?;
         }
         if self.queue.ranges_rejected() {
             return Err(DownloadError::RangeUnsupported);
@@ -102,7 +104,10 @@ impl WorkerPool {
 
     async fn work_chunk(self: &Arc<Self>, worker_id: usize, index: usize) -> ChunkExit {
         if let Some(tx) = &self.progress_tx {
-            let _ = tx.try_send(ProgressEvent::ChunkStarted { worker: worker_id, index });
+            let _ = tx.try_send(ProgressEvent::ChunkStarted {
+                worker: worker_id,
+                index,
+            });
         }
         let attempts = self.queue.attempt(index);
         self.queue.reset_progress(index);
@@ -242,7 +247,9 @@ pub fn validate_content_range(
     let (range, declared_total) = spec
         .split_once('/')
         .ok_or(DownloadError::RangeUnsupported)?;
-    let (start, _) = range.split_once('-').ok_or(DownloadError::RangeUnsupported)?;
+    let (start, _) = range
+        .split_once('-')
+        .ok_or(DownloadError::RangeUnsupported)?;
     if start.parse::<u64>() != Ok(expected_start) {
         return Err(DownloadError::RangeUnsupported);
     }

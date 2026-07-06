@@ -36,7 +36,8 @@ mod tests {
 
     #[test]
     fn delay_grows_exponentially_until_capped() {
-        let policy = RetryPolicy::new(10).with_delays(Duration::from_millis(100), Duration::from_secs(2));
+        let policy =
+            RetryPolicy::new(10).with_delays(Duration::from_millis(100), Duration::from_secs(2));
         assert_eq!(policy.next_delay(1), Duration::from_millis(100));
         assert_eq!(policy.next_delay(2), Duration::from_millis(200));
         assert_eq!(policy.next_delay(3), Duration::from_millis(400));

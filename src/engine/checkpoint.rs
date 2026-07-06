@@ -45,7 +45,11 @@ impl CheckpointGuard {
                 inner.periodic_flush_loop(&mut quit_rx).await;
             })
         };
-        Self { inner, quit_tx, task: Some(task) }
+        Self {
+            inner,
+            quit_tx,
+            task: Some(task),
+        }
     }
 
     pub fn set_integrity_sha(&self, sha256: String) {
@@ -154,12 +158,17 @@ mod tests {
             },
             chunk_size: 128,
         };
-        let guard = CheckpointGuard::spawn(&dest, template, dispatcher.clone(), Duration::from_secs(1));
+        let guard =
+            CheckpointGuard::spawn(&dest, template, dispatcher.clone(), Duration::from_secs(1));
         guard.finish().await.unwrap();
 
         let manifest = Manifest::load(&dest).unwrap().unwrap();
         assert_eq!(manifest.chunks.len(), 4);
-        let complete = manifest.chunks.iter().filter(|entry| entry.downloaded == 128).count();
+        let complete = manifest
+            .chunks
+            .iter()
+            .filter(|entry| entry.downloaded == 128)
+            .count();
         assert_eq!(complete, 2);
         let _ = std::fs::remove_file(crate::engine::manifest::sidecar_path(&dest));
     }

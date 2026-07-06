@@ -41,7 +41,9 @@ pub async fn download_single_stream(
             }
             Err(err) if controller.is_cancelled() => return Err(err),
             Err(_) if failures < spec.policy.max_attempts.saturating_sub(1) => {
-                controller.delay(spec.policy.next_delay(failures + 1)).await?;
+                controller
+                    .delay(spec.policy.next_delay(failures + 1))
+                    .await?;
                 failures += 1;
             }
             Err(err) => return Err(err),

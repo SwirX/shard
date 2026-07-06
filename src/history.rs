@@ -1,7 +1,7 @@
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::{Path, PathBuf};
 
-use crate::registry::{data_dir, EntryStatus};
+use crate::registry::{EntryStatus, data_dir};
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS downloads (
@@ -45,8 +45,9 @@ impl History {
 
     fn open_at(path: &Path) -> std::io::Result<History> {
         std::fs::create_dir_all(path.parent().expect("history db has a parent directory"))?;
-        let conn = Connection::open(path)
-            .map_err(|err| std::io::Error::other(format!("open history {}: {err}", path.display())))?;
+        let conn = Connection::open(path).map_err(|err| {
+            std::io::Error::other(format!("open history {}: {err}", path.display()))
+        })?;
         conn.execute_batch(SCHEMA)
             .map_err(|err| std::io::Error::other(format!("init history schema: {err}")))?;
         Ok(History { conn })
@@ -78,8 +79,10 @@ impl History {
     pub fn list(&self) -> std::io::Result<Vec<HistoryEntry>> {
         let mut statement = self
             .conn
-            .prepare("SELECT id, url, final_url, dest, status, size, sha256, started_at, updated_at
-                      FROM downloads ORDER BY updated_at DESC")
+            .prepare(
+                "SELECT id, url, final_url, dest, status, size, sha256, started_at, updated_at
+                      FROM downloads ORDER BY updated_at DESC",
+            )
             .map_err(|err| std::io::Error::other(format!("prepare history list: {err}")))?;
         let rows = statement
             .query_map([], |row| {
@@ -103,8 +106,10 @@ impl History {
     pub fn by_id_or_url(&self, needle: &str) -> std::io::Result<Option<HistoryEntry>> {
         let mut statement = self
             .conn
-            .prepare("SELECT id, url, final_url, dest, status, size, sha256, started_at, updated_at
-                      FROM downloads WHERE id = ?1 OR url = ?1 ORDER BY updated_at DESC LIMIT 1")
+            .prepare(
+                "SELECT id, url, final_url, dest, status, size, sha256, started_at, updated_at
+                      FROM downloads WHERE id = ?1 OR url = ?1 ORDER BY updated_at DESC LIMIT 1",
+            )
             .map_err(|err| std::io::Error::other(format!("prepare history lookup: {err}")))?;
         let mut rows = statement
             .query_map([needle], |row| {

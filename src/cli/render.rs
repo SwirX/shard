@@ -1,4 +1,4 @@
-use crate::cli::lines::{summary_line, worker_lines, FrameStats};
+use crate::cli::lines::{FrameStats, summary_line, worker_lines};
 use crate::cli::state::ProgressTracker;
 use crate::cli::style::Style;
 use shard::engine::progress::ProgressEvent;
@@ -78,7 +78,10 @@ impl Renderer {
 
     fn paint_throttled(&mut self) {
         let now = Instant::now();
-        if self.last_paint.is_some_and(|last| now - last < PAINT_INTERVAL) {
+        if self
+            .last_paint
+            .is_some_and(|last| now - last < PAINT_INTERVAL)
+        {
             return;
         }
         self.last_paint = Some(now);
@@ -100,7 +103,12 @@ impl Renderer {
 
     fn compose_lines(&self, stats: &FrameStats) -> Vec<String> {
         let mut lines = match self.view {
-            View::Bar => vec![summary_line(&self.tracker, &self.style, stats, self.terminal_width)],
+            View::Bar => vec![summary_line(
+                &self.tracker,
+                &self.style,
+                stats,
+                self.terminal_width,
+            )],
             View::Workers => worker_lines(&self.tracker, &self.style, self.tracker_workers()),
         };
         if self.view == View::Bar && !self.hint_consumed {
@@ -167,11 +175,7 @@ pub fn truncate_line(line: &str, width: usize) -> String {
 }
 
 fn unicode_width(ch: char) -> usize {
-    if ch.is_ascii() {
-        1
-    } else {
-        2
-    }
+    if ch.is_ascii() { 1 } else { 2 }
 }
 
 pub async fn run_progress_renderer(
@@ -225,7 +229,10 @@ mod tests {
     #[test]
     fn hint_only_in_bar_view_before_first_toggle() {
         let style = Style::new(false, false);
-        let stats = FrameStats { started_at: Instant::now(), last_paint_at: Instant::now() };
+        let stats = FrameStats {
+            started_at: Instant::now(),
+            last_paint_at: Instant::now(),
+        };
         let mut renderer = Renderer::new(style, 2);
         let lines = renderer.compose_lines(&stats);
         assert!(lines.iter().any(|line| line.contains("toggle view")));
@@ -236,10 +243,7 @@ mod tests {
 
     #[test]
     fn finish_switches_back_to_the_bar_view() {
-        let mut renderer = Renderer::new(
-            Style::new(false, false),
-            2,
-        );
+        let mut renderer = Renderer::new(Style::new(false, false), 2);
         renderer.handle_key(KeyCommand::ToggleView);
         assert_eq!(renderer.view, View::Workers);
         renderer.finish();

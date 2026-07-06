@@ -14,11 +14,12 @@ pub async fn serve(
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let listener = UnixListener::bind(path)
-        .map_err(|err| crate::engine::error::DownloadError::Io(std::io::Error::other(format!(
+    let listener = UnixListener::bind(path).map_err(|err| {
+        crate::engine::error::DownloadError::Io(std::io::Error::other(format!(
             "cannot bind control socket {}: {err}",
             path.display()
-        ))))?;
+        )))
+    })?;
     loop {
         tokio::select! {
             changed = shutdown.changed() => {
@@ -72,7 +73,9 @@ async fn handle_connection(stream: UnixStream, controller: Controller) -> std::i
                 }
             }
             other => {
-                writer.write_all(format!("error unknown command {other:?}\n").as_bytes()).await?;
+                writer
+                    .write_all(format!("error unknown command {other:?}\n").as_bytes())
+                    .await?;
                 continue;
             }
         };
@@ -90,7 +93,10 @@ mod tests {
     async fn rpc(sock: &Path, command: &str) -> String {
         let stream = UnixStream::connect(sock).await.unwrap();
         let (reader, mut writer) = stream.into_split();
-        writer.write_all(format!("{command}\n").as_bytes()).await.unwrap();
+        writer
+            .write_all(format!("{command}\n").as_bytes())
+            .await
+            .unwrap();
         writer.flush().await.unwrap();
         let mut reader = BufReader::new(reader);
         let mut line = String::new();
@@ -102,10 +108,7 @@ mod tests {
     async fn commands_control_the_controller_over_the_socket() {
         let controller = Controller::default();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let dir = std::env::temp_dir().join(format!(
-            "shard-socket-test-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("shard-socket-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let sock = dir.join("run.sock");
         let serve_sock = sock.clone();

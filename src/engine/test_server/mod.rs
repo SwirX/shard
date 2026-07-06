@@ -1,8 +1,8 @@
 pub mod handler;
 
-use handler::{serve, ServerFeatures};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use handler::{ServerFeatures, serve};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::net::TcpListener;
 
 pub struct TestServer {

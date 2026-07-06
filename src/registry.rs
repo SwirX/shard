@@ -109,7 +109,9 @@ impl Registry {
     }
 
     pub fn active(&self) -> impl Iterator<Item = &Entry> {
-        self.entries.iter().filter(|entry| entry.status == EntryStatus::Downloading)
+        self.entries
+            .iter()
+            .filter(|entry| entry.status == EntryStatus::Downloading)
     }
 }
 
@@ -201,7 +203,10 @@ mod tests {
             started_at: iso_now(),
             updated_at: iso_now(),
         });
-        assert_eq!(registry.by_id_or_url("new").unwrap().status, EntryStatus::Downloading);
+        assert_eq!(
+            registry.by_id_or_url("new").unwrap().status,
+            EntryStatus::Downloading
+        );
         assert!(registry.by_id_or_url("https://example.com/f.bin").is_some());
         assert_eq!(registry.active().count(), 1);
     }

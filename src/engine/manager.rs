@@ -3,7 +3,7 @@ use crate::engine::control::Controller;
 use crate::engine::error::{DownloadError, DownloadResult};
 use crate::engine::http::EngineHttp;
 use crate::engine::manifest::{
-    judge_resume, remove_sidecar, Manifest, ManifestTemplate, RemoteSnapshot, ResumeVerdict,
+    Manifest, ManifestTemplate, RemoteSnapshot, ResumeVerdict, judge_resume, remove_sidecar,
 };
 use crate::engine::metadata::{RemoteMetadata, RemoteResolver};
 use crate::engine::planner::{Chunk, ChunkPlan};
@@ -11,7 +11,7 @@ use crate::engine::progress::ProgressEvent;
 use crate::engine::retry::RetryPolicy;
 use crate::engine::verify::Sha256Hasher;
 use crate::engine::worker::{PoolConfig, WorkerPool};
-use crate::engine::writer::{file_len, PositionalWriter};
+use crate::engine::writer::{PositionalWriter, file_len};
 use reqwest::Client as HttpClient;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -61,7 +61,8 @@ impl Default for DownloadOptions {
 }
 
 fn retry_policy(options: &DownloadOptions) -> RetryPolicy {
-    RetryPolicy::new(options.max_attempts).with_delays(options.retry_base_delay, options.retry_max_delay)
+    RetryPolicy::new(options.max_attempts)
+        .with_delays(options.retry_base_delay, options.retry_max_delay)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -307,7 +308,7 @@ async fn run_single_stream(
     progress_tx: &Option<mpsc::Sender<ProgressEvent>>,
 ) -> DownloadResult<DownloadOutcome> {
     use crate::engine::manifest::ChunkEntry;
-    use crate::engine::stream::{download_single_stream, SingleStreamSpec};
+    use crate::engine::stream::{SingleStreamSpec, download_single_stream};
 
     let spec = SingleStreamSpec {
         url: remote.final_url.clone(),
@@ -456,18 +457,15 @@ fn filetype_category(name: &str) -> &'static str {
 }
 
 fn parse_content_disposition_filename(value: &str) -> Option<String> {
-    value
-        .split(';')
-        .map(str::trim)
-        .find_map(|part| {
-            let rest = part.strip_prefix("filename=")?;
-            let name = rest.trim().trim_matches('"');
-            if name.is_empty() || name.contains('/') || name.contains('\\') {
-                None
-            } else {
-                Some(name.to_string())
-            }
-        })
+    value.split(';').map(str::trim).find_map(|part| {
+        let rest = part.strip_prefix("filename=")?;
+        let name = rest.trim().trim_matches('"');
+        if name.is_empty() || name.contains('/') || name.contains('\\') {
+            None
+        } else {
+            Some(name.to_string())
+        }
+    })
 }
 
 fn url_basename(final_url: &str) -> Option<String> {
@@ -494,11 +492,9 @@ fn hash_file(path: &Path) -> DownloadResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::manifest::{
-        sidecar_path, ChunkEntry, ManifestTemplate, RemoteSnapshot,
-    };
+    use crate::engine::manifest::{ChunkEntry, ManifestTemplate, RemoteSnapshot, sidecar_path};
     use crate::engine::test_server::handler::ServerFeatures;
-    use crate::engine::test_server::{expected_sha256, deterministic_body, handler, TestServer};
+    use crate::engine::test_server::{TestServer, deterministic_body, expected_sha256, handler};
     use std::os::unix::fs::FileExt;
 
     #[tokio::test]
@@ -516,7 +512,7 @@ mod tests {
                     chunk_size: 1024 * 1024,
                     connections: 8,
                     max_attempts: 3,
-                ..Default::default()
+                    ..Default::default()
                 },
                 None,
             )
@@ -550,7 +546,7 @@ mod tests {
                     chunk_size: 512 * 1024,
                     connections: 4,
                     max_attempts: 3,
-                ..Default::default()
+                    ..Default::default()
                 },
                 None,
             )
@@ -576,7 +572,9 @@ mod tests {
             parse_content_disposition_filename("attachment; filename=simple.bin; size=5"),
             Some("simple.bin".to_string())
         );
-        assert!(parse_content_disposition_filename("attachment; filename=../../etc/passwd").is_none());
+        assert!(
+            parse_content_disposition_filename("attachment; filename=../../etc/passwd").is_none()
+        );
         assert!(parse_content_disposition_filename("attachment").is_none());
     }
 
@@ -665,10 +663,26 @@ mod tests {
         let dest = std::env::temp_dir().join("shard-resume-manifest.bin");
 
         let chunks = vec![
-            ChunkEntry { start: 0, end: 262143, downloaded: 262144 },
-            ChunkEntry { start: 262144, end: 524287, downloaded: 0 },
-            ChunkEntry { start: 524288, end: 786431, downloaded: 262144 },
-            ChunkEntry { start: 786432, end: 1048575, downloaded: 100_000 },
+            ChunkEntry {
+                start: 0,
+                end: 262143,
+                downloaded: 262144,
+            },
+            ChunkEntry {
+                start: 262144,
+                end: 524287,
+                downloaded: 0,
+            },
+            ChunkEntry {
+                start: 524288,
+                end: 786431,
+                downloaded: 262144,
+            },
+            ChunkEntry {
+                start: 786432,
+                end: 1048575,
+                downloaded: 100_000,
+            },
         ];
         let template = ManifestTemplate {
             url: server.url(),
@@ -740,7 +754,11 @@ mod tests {
         };
         template
             .into_manifest(
-                vec![ChunkEntry { start: 0, end: 2097151, downloaded: 0 }],
+                vec![ChunkEntry {
+                    start: 0,
+                    end: 2097151,
+                    downloaded: 0,
+                }],
                 None,
             )
             .save_atomic(&dest)
@@ -774,7 +792,10 @@ mod tests {
         let server = TestServer::spawn_with(
             body.clone(),
             handler::ServerFeatures {
-                delay: handler::DelayProfile::Jitter { seed: 9, max_delay_ms: 250 },
+                delay: handler::DelayProfile::Jitter {
+                    seed: 9,
+                    max_delay_ms: 250,
+                },
                 fragment_bytes: Some(1024),
                 ..Default::default()
             },
@@ -800,7 +821,10 @@ mod tests {
         handle.controller.cancel();
         let outcome = handle.wait().await.unwrap();
         assert_eq!(outcome.status, OutcomeStatus::Cancelled);
-        assert!(sidecar_path(&dest).exists(), "cancel must leave a resume sidecar");
+        assert!(
+            sidecar_path(&dest).exists(),
+            "cancel must leave a resume sidecar"
+        );
         assert!(sidecar_path(&dest).metadata().unwrap().len() > 0);
 
         let outcome = manager

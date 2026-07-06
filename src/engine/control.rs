@@ -1,7 +1,7 @@
 use crate::engine::error::{DownloadError, DownloadResult};
 use futures_util::StreamExt;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::Notify;
 
@@ -54,15 +54,21 @@ impl Controller {
     }
 
     pub async fn wait_while_paused(&self) {
-        self.await_until(|paused, cancelled| !paused || cancelled, &self.inner.pause_notify).await;
+        self.await_until(
+            |paused, cancelled| !paused || cancelled,
+            &self.inner.pause_notify,
+        )
+        .await;
     }
 
     pub async fn wait_until_paused(&self) {
-        self.await_until(|paused, _| paused, &self.inner.pause_notify).await;
+        self.await_until(|paused, _| paused, &self.inner.pause_notify)
+            .await;
     }
 
     pub async fn cancelled(&self) {
-        self.await_until(|_, cancelled| cancelled, &self.inner.cancel_notify).await;
+        self.await_until(|_, cancelled| cancelled, &self.inner.cancel_notify)
+            .await;
     }
 
     pub async fn next_body_chunk(
@@ -98,11 +104,7 @@ impl Controller {
         }
     }
 
-    async fn await_until(
-        &self,
-        satisfied: impl Fn(bool, bool) -> bool,
-        wake: &Notify,
-    ) {
+    async fn await_until(&self, satisfied: impl Fn(bool, bool) -> bool, wake: &Notify) {
         loop {
             let paused = self.is_paused();
             let cancelled = self.is_cancelled();
@@ -136,7 +138,10 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(20)).await;
         assert!(!parked.is_finished());
         controller.resume();
-        tokio::time::timeout(Duration::from_secs(1), parked).await.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(1), parked)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]
@@ -156,7 +161,10 @@ mod tests {
             async move { controller.wait_while_paused().await }
         });
         controller.cancel();
-        tokio::time::timeout(Duration::from_secs(1), parked).await.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(1), parked)
+            .await
+            .unwrap()
+            .unwrap();
         assert!(controller.is_cancelled());
     }
 
@@ -168,7 +176,10 @@ mod tests {
             async move { controller.cancelled().await }
         });
         controller.cancel();
-        tokio::time::timeout(Duration::from_secs(1), waiter).await.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(1), waiter)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]

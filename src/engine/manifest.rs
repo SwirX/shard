@@ -53,11 +53,7 @@ pub struct ManifestTemplate {
 }
 
 impl ManifestTemplate {
-    pub fn into_manifest(
-        self,
-        chunks: Vec<ChunkEntry>,
-        sha256: Option<String>,
-    ) -> Manifest {
+    pub fn into_manifest(self, chunks: Vec<ChunkEntry>, sha256: Option<String>) -> Manifest {
         Manifest {
             version: MANIFEST_VERSION,
             url: self.url,
@@ -129,7 +125,10 @@ fn write_json_atomic(dest: &Path, body: &[u8]) -> DownloadResult<()> {
 }
 
 fn sync_parent(path: &Path) -> DownloadResult<()> {
-    let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) else {
+    let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    else {
         return Ok(());
     };
     File::open(parent)?.sync_all()?;
@@ -162,7 +161,10 @@ pub fn judge_resume(
     let identity_ok = match (&manifest.remote.etag, current.etag.as_deref()) {
         (Some(from_before), Some(from_now)) => from_before == from_now,
         (Some(_), None) | (None, Some(_)) => false,
-        (None, None) => match (&manifest.remote.last_modified, current.last_modified.as_deref()) {
+        (None, None) => match (
+            &manifest.remote.last_modified,
+            current.last_modified.as_deref(),
+        ) {
             (Some(from_before), Some(from_now)) => from_before == from_now,
             (Some(_), None) | (None, Some(_)) => false,
             (None, None) => true,
@@ -193,10 +195,26 @@ mod tests {
         };
         template.into_manifest(
             vec![
-                ChunkEntry { start: 0, end: 255, downloaded: 256 },
-                ChunkEntry { start: 256, end: 511, downloaded: 128 },
-                ChunkEntry { start: 512, end: 767, downloaded: 0 },
-                ChunkEntry { start: 768, end: 999, downloaded: 0 },
+                ChunkEntry {
+                    start: 0,
+                    end: 255,
+                    downloaded: 256,
+                },
+                ChunkEntry {
+                    start: 256,
+                    end: 511,
+                    downloaded: 128,
+                },
+                ChunkEntry {
+                    start: 512,
+                    end: 767,
+                    downloaded: 0,
+                },
+                ChunkEntry {
+                    start: 768,
+                    end: 999,
+                    downloaded: 0,
+                },
             ],
             None,
         )
@@ -229,7 +247,10 @@ mod tests {
             etag: Some("\"abc\"".into()),
             last_modified: Some("Wed, 02 Sep 2026 14:21:00 GMT".into()),
         };
-        assert_eq!(judge_resume(&manifest, &current, 1000), ResumeVerdict::Continue);
+        assert_eq!(
+            judge_resume(&manifest, &current, 1000),
+            ResumeVerdict::Continue
+        );
     }
 
     #[test]
@@ -240,7 +261,10 @@ mod tests {
             etag: Some("\"different\"".into()),
             last_modified: None,
         };
-        assert!(matches!(judge_resume(&manifest, &current, 1000), ResumeVerdict::Refuse(_)));
+        assert!(matches!(
+            judge_resume(&manifest, &current, 1000),
+            ResumeVerdict::Refuse(_)
+        ));
     }
 
     #[test]
@@ -252,7 +276,10 @@ mod tests {
             etag: None,
             last_modified: Some("Thu, 03 Sep 2026 09:00:00 GMT".into()),
         };
-        assert!(matches!(judge_resume(&manifest, &current, 1000), ResumeVerdict::Refuse(_)));
+        assert!(matches!(
+            judge_resume(&manifest, &current, 1000),
+            ResumeVerdict::Refuse(_)
+        ));
     }
 
     #[test]
@@ -265,7 +292,10 @@ mod tests {
             etag: None,
             last_modified: None,
         };
-        assert_eq!(judge_resume(&manifest, &current, 1000), ResumeVerdict::Continue);
+        assert_eq!(
+            judge_resume(&manifest, &current, 1000),
+            ResumeVerdict::Continue
+        );
     }
 
     #[test]
@@ -276,7 +306,10 @@ mod tests {
             etag: Some("\"abc\"".into()),
             last_modified: None,
         };
-        assert!(matches!(judge_resume(&manifest, &current, 512), ResumeVerdict::Refuse(_)));
+        assert!(matches!(
+            judge_resume(&manifest, &current, 512),
+            ResumeVerdict::Refuse(_)
+        ));
     }
 
     #[test]
@@ -287,6 +320,9 @@ mod tests {
             etag: Some("\"abc\"".into()),
             last_modified: None,
         };
-        assert!(matches!(judge_resume(&manifest, &current, 1000), ResumeVerdict::Refuse(_)));
+        assert!(matches!(
+            judge_resume(&manifest, &current, 1000),
+            ResumeVerdict::Refuse(_)
+        ));
     }
 }

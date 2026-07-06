@@ -1,7 +1,7 @@
 use crate::engine::error::{DownloadError, DownloadResult};
 use crate::engine::http::EngineHttp;
-use reqwest::Client as HttpClient;
 use http::HeaderValue;
+use reqwest::Client as HttpClient;
 
 #[derive(Debug, Clone)]
 pub struct RemoteMetadata {
@@ -42,18 +42,13 @@ impl RemoteResolver {
     }
 
     async fn resolve_redirects(&self, url: &str) -> DownloadResult<String> {
-        let response = self
-            .client
-            .head(url)
-            .send()
-            .await
-            .map_err(|err| {
-                if err.is_redirect() {
-                    DownloadError::InvalidArgument("too many redirects".into())
-                } else {
-                    DownloadError::Http(err)
-                }
-            })?;
+        let response = self.client.head(url).send().await.map_err(|err| {
+            if err.is_redirect() {
+                DownloadError::InvalidArgument("too many redirects".into())
+            } else {
+                DownloadError::Http(err)
+            }
+        })?;
         let final_url = response.url().clone().to_string();
         Ok(final_url)
     }
@@ -107,7 +102,10 @@ struct RangeProbe {
     content_disposition: Option<String>,
 }
 
-fn header_string(headers: &http::HeaderMap<HeaderValue>, name: http::header::HeaderName) -> Option<String> {
+fn header_string(
+    headers: &http::HeaderMap<HeaderValue>,
+    name: http::header::HeaderName,
+) -> Option<String> {
     headers
         .get(name)
         .and_then(|value| value.to_str().ok())

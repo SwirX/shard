@@ -131,7 +131,9 @@ fn default_resume() -> bool {
 }
 
 fn default_download_dir() -> String {
-    let base = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let base = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
     let mut candidate = base.join("Downloads");
     if let Ok(dirs) = std::fs::read_to_string(base.join(".config").join("user-dirs.dirs"))
         && let Some(line) = dirs
@@ -300,9 +302,10 @@ fn parse_set_value<'a>(
         "connections" | "chunk_size" | "max_attempts" | "retry_base_ms" | "retry_max_ms"
         | "checkpoint_ms" | "resume" | "download_dir" => (Section::Download, key),
         "filetype.video" | "filetype.image" | "filetype.audio" | "filetype.archive"
-        | "filetype.document" | "filetype.other" => {
-            (Section::Filetype, key.strip_prefix("filetype.").unwrap_or(key))
-        }
+        | "filetype.document" | "filetype.other" => (
+            Section::Filetype,
+            key.strip_prefix("filetype.").unwrap_or(key),
+        ),
         _ => {
             return Err(std::io::Error::other(format!(
                 "unknown key {key:?}; pick one of: {}",
@@ -311,9 +314,11 @@ fn parse_set_value<'a>(
         }
     };
     let parsed = match field {
-        "color" => {
-            parse_enum(value, &["auto", "always", "never"], "color must be auto, always, or never")?
-        }
+        "color" => parse_enum(
+            value,
+            &["auto", "always", "never"],
+            "color must be auto, always, or never",
+        )?,
         "prefer-eyecandy" => toml::Value::Boolean(parse_bool(value, field)?),
         "resume" => toml::Value::Boolean(parse_bool(value, field)?),
         "connections" | "chunk_size" | "max_attempts" | "retry_base_ms" | "retry_max_ms"
@@ -468,7 +473,9 @@ mod tests {
     #[test]
     fn unknown_key_is_rejected() {
         let path = scratch();
-        let message = Config::set_at(&path, "threads", "4").unwrap_err().to_string();
+        let message = Config::set_at(&path, "threads", "4")
+            .unwrap_err()
+            .to_string();
         assert!(message.contains("unknown key"), "got: {message}");
     }
 

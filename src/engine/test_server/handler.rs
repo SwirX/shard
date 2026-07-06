@@ -43,12 +43,7 @@ impl Default for ServerFeatures {
     }
 }
 
-pub async fn serve(
-    listener: TcpListener,
-    body: Vec<u8>,
-    etag: String,
-    features: ServerFeatures,
-) {
+pub async fn serve(listener: TcpListener, body: Vec<u8>, etag: String, features: ServerFeatures) {
     loop {
         let (mut socket, _) = match listener.accept().await {
             Ok(pair) => pair,
@@ -93,7 +88,10 @@ async fn handle_connection(
         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let header = |name: &str| -> Option<String> {
         text.lines()
-            .find(|line| line.to_ascii_lowercase().starts_with(&name.to_ascii_lowercase()))
+            .find(|line| {
+                line.to_ascii_lowercase()
+                    .starts_with(&name.to_ascii_lowercase())
+            })
             .and_then(|line| line.split_once(':').map(|(_, v)| v.trim().to_string()))
     };
     let range_text = header("range");
@@ -112,7 +110,13 @@ async fn handle_connection(
         tokio::time::sleep(delay).await;
     }
 
-    let head_bytes = build_response_head(is_head, range, body.len(), etag, features.content_disposition.as_deref());
+    let head_bytes = build_response_head(
+        is_head,
+        range,
+        body.len(),
+        etag,
+        features.content_disposition.as_deref(),
+    );
     let _ = socket.write_all(&head_bytes).await;
 
     if !is_head {
@@ -192,7 +196,11 @@ fn build_response_head(
     let _ = is_head;
     let (status, content_length, content_range) = match range {
         None => ("200 OK", body_len.to_string(), None),
-        Some((0, 0)) => ("206 Partial Content", "1".to_string(), Some("0-0".to_string())),
+        Some((0, 0)) => (
+            "206 Partial Content",
+            "1".to_string(),
+            Some("0-0".to_string()),
+        ),
         Some((start, end)) => (
             "206 Partial Content",
             (end - start + 1).to_string(),

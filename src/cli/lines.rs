@@ -19,7 +19,11 @@ pub fn summary_line(
 ) -> String {
     let done_bytes = tracker.done_bytes();
     let total = tracker.total.unwrap_or(0);
-    let ratio = if total > 0 { done_bytes as f64 / total as f64 } else { 0.0 };
+    let ratio = if total > 0 {
+        done_bytes as f64 / total as f64
+    } else {
+        0.0
+    };
     let cells = bar_width_cells
         .saturating_sub(BAR_TEXT_PADDING)
         .clamp(14, MAX_BAR_CELLS);
@@ -27,7 +31,11 @@ pub fn summary_line(
 
     let mut bar = String::new();
     for cell in 0..cells {
-        let glyph = if cell < filled { style.bar_filled() } else { style.bar_empty() };
+        let glyph = if cell < filled {
+            style.bar_filled()
+        } else {
+            style.bar_empty()
+        };
         let chunk = tracker
             .chunk_for_offset(total.saturating_mul(cell as u64) / cells as u64)
             .unwrap_or(cell);
@@ -38,8 +46,15 @@ pub fn summary_line(
         bar.push_str(&style.paint(&ansi, &glyph.to_string()));
     }
 
-    let elapsed = stats.last_paint_at.duration_since(stats.started_at).as_secs_f64();
-    let speed_mbs = if elapsed > 0.0 { done_bytes as f64 / elapsed / 1_000_000.0 } else { 0.0 };
+    let elapsed = stats
+        .last_paint_at
+        .duration_since(stats.started_at)
+        .as_secs_f64();
+    let speed_mbs = if elapsed > 0.0 {
+        done_bytes as f64 / elapsed / 1_000_000.0
+    } else {
+        0.0
+    };
     let speed_text = style.paint("38;5;114", &format!("{speed_mbs:>6.2} MB/s"));
     let percent_text = style.paint("38;5;228", &format!("{:>6.1}%", ratio * 100.0));
     let eta_secs = if speed_mbs > 0.0 && total > 0 {
@@ -50,9 +65,16 @@ pub fn summary_line(
     let eta_text = style.paint("38;5;213", &format!("eta {:>5.0}s", eta_secs));
     let finished = tracker.finished_chunks();
     let planned = tracker.planned_chunk_count();
-    let chunk_total = if planned > 0 { planned } else { tracker.chunk_count().max(finished) };
+    let chunk_total = if planned > 0 {
+        planned
+    } else {
+        tracker.chunk_count().max(finished)
+    };
     let chunk_text = style.paint("38;5;117", &format!("chunks {finished}/{chunk_total}"));
-    let active_text = style.paint("38;5;180", &format!("{} active", tracker.active_worker_count()));
+    let active_text = style.paint(
+        "38;5;180",
+        &format!("{} active", tracker.active_worker_count()),
+    );
 
     format!(
         "{glyph} {bar}  {percent_text}  {speed_text}  {eta_text}  {chunk_text} {active_text}",
@@ -79,7 +101,9 @@ pub fn worker_lines(tracker: &ProgressTracker, style: &Style, workers: usize) ->
         let file_pct = style.paint("38;5;117", &format!("{:>6.1}% file", file_ratio * 100.0));
         let mb = format!("{:>7.2} MB", bytes as f64 / 1_000_000.0);
         let bar = worker_minibar(share_ratio, style);
-        lines.push(format!("{glyph} {id} {working} {bar} {share_pct} share  {file_pct} {mb}"));
+        lines.push(format!(
+            "{glyph} {id} {working} {bar} {share_pct} share  {file_pct} {mb}"
+        ));
     }
     lines
 }
@@ -89,7 +113,11 @@ fn worker_minibar(ratio: f64, style: &Style) -> String {
     let filled = (WIDTH as f64 * ratio).round() as usize;
     (0..WIDTH)
         .map(|cell| {
-            let glyph = if cell < filled { style.bar_filled() } else { style.bar_empty() };
+            let glyph = if cell < filled {
+                style.bar_filled()
+            } else {
+                style.bar_empty()
+            };
             style.paint(DIM_ANSI, &glyph.to_string())
         })
         .collect()
@@ -110,26 +138,49 @@ mod tests {
 
     fn stats() -> FrameStats {
         let now = Instant::now();
-        FrameStats { started_at: now, last_paint_at: now }
+        FrameStats {
+            started_at: now,
+            last_paint_at: now,
+        }
     }
 
     #[test]
     fn summary_line_shows_percentage_and_chunk_counts() {
         let tracker = tracker(vec![
-            ProgressEvent::Start { total: 1000, chunk_size: 100 },
-            ProgressEvent::ChunkStarted { worker: 0, index: 0 },
-            ProgressEvent::ChunkAdvanced { worker: 0, index: 0, written: 100 },
-            ProgressEvent::ChunkComplete { worker: 0, index: 0 },
+            ProgressEvent::Start {
+                total: 1000,
+                chunk_size: 100,
+            },
+            ProgressEvent::ChunkStarted {
+                worker: 0,
+                index: 0,
+            },
+            ProgressEvent::ChunkAdvanced {
+                worker: 0,
+                index: 0,
+                written: 100,
+            },
+            ProgressEvent::ChunkComplete {
+                worker: 0,
+                index: 0,
+            },
         ]);
         let style = Style::new(false, false);
         let text = summary_line(&tracker, &style, &stats(), 60);
-        assert!(text.contains("10.0%"), "done={} text={text}", tracker.done_bytes());
+        assert!(
+            text.contains("10.0%"),
+            "done={} text={text}",
+            tracker.done_bytes()
+        );
         assert!(text.contains("chunks 1/"), "one chunk marked done");
     }
 
     #[test]
     fn plain_summary_uses_ascii_glyphs() {
-        let tracker = tracker(vec![ProgressEvent::Start { total: 100, chunk_size: 100 }]);
+        let tracker = tracker(vec![ProgressEvent::Start {
+            total: 100,
+            chunk_size: 100,
+        }]);
         let style = Style::new(false, false);
         let text = summary_line(&tracker, &style, &stats(), 10);
         assert!(text.starts_with("> "), "plain download glyph is >");
@@ -138,9 +189,19 @@ mod tests {
     #[test]
     fn worker_lines_render_one_line_per_worker() {
         let tracker = tracker(vec![
-            ProgressEvent::Start { total: 1000, chunk_size: 100 },
-            ProgressEvent::ChunkStarted { worker: 1, index: 2 },
-            ProgressEvent::ChunkAdvanced { worker: 1, index: 2, written: 500 },
+            ProgressEvent::Start {
+                total: 1000,
+                chunk_size: 100,
+            },
+            ProgressEvent::ChunkStarted {
+                worker: 1,
+                index: 2,
+            },
+            ProgressEvent::ChunkAdvanced {
+                worker: 1,
+                index: 2,
+                written: 500,
+            },
         ]);
         let style = Style::new(false, true);
         let lines = worker_lines(&tracker, &style, 3);
@@ -155,8 +216,14 @@ mod tests {
     #[test]
     fn worker_colors_differ_across_workers() {
         let tracker = tracker(vec![
-            ProgressEvent::Start { total: 1000, chunk_size: 100 },
-            ProgressEvent::ChunkStarted { worker: 0, index: 0 },
+            ProgressEvent::Start {
+                total: 1000,
+                chunk_size: 100,
+            },
+            ProgressEvent::ChunkStarted {
+                worker: 0,
+                index: 0,
+            },
         ]);
         let style = Style::new(true, false);
         let lines = worker_lines(&tracker, &style, 2);

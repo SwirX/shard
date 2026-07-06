@@ -2,7 +2,7 @@ use crate::engine::error::DownloadError;
 use crate::engine::manager::{DownloadManager, DownloadOptions};
 use crate::engine::progress::ProgressEvent;
 use crate::engine::test_server::handler::{DelayProfile, ServerFeatures};
-use crate::engine::test_server::{deterministic_body, expected_sha256, TestServer};
+use crate::engine::test_server::{TestServer, deterministic_body, expected_sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -85,7 +85,11 @@ async fn failed_chunk_is_requeued_and_recovers() {
     assert_eq!(on_disk, body);
     assert_eq!(completions.len(), 4);
     let remaining = drop_tracker.lock().unwrap().get(&(0, 65535)).copied();
-    assert_eq!(remaining, Some(0), "drop counter must be consumed exactly once");
+    assert_eq!(
+        remaining,
+        Some(0),
+        "drop counter must be consumed exactly once"
+    );
 }
 
 #[tokio::test]
@@ -263,7 +267,9 @@ async fn throughput_benchmark() {
         let elapsed = start.elapsed().as_secs_f64();
         assert_eq!(outcome.sha256, expected);
         let throughput = server.body.len() as f64 / 1_000_000.0 / elapsed;
-        rows.push(format!("{connections:>2} workers  {elapsed:>6.2}s  {throughput:>8.2} MB/s"));
+        rows.push(format!(
+            "{connections:>2} workers  {elapsed:>6.2}s  {throughput:>8.2} MB/s"
+        ));
         let _ = std::fs::remove_file(&dest);
     }
     println!("\nshard throughput against local test server (64 MiB):");

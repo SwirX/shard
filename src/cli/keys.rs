@@ -15,9 +15,7 @@ impl Drop for RawModeGuard {
     }
 }
 
-pub fn spawn_key_listener(
-    tx: mpsc::Sender<KeyCommand>,
-) -> Option<tokio::task::JoinHandle<()>> {
+pub fn spawn_key_listener(tx: mpsc::Sender<KeyCommand>) -> Option<tokio::task::JoinHandle<()>> {
     if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() {
         return None;
     }

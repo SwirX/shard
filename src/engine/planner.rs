@@ -39,7 +39,10 @@ impl ChunkPlan {
         let mut chunks = Vec::new();
         let mut start = 0u64;
         while start < total_size {
-            let end = start.saturating_add(chunk_size).saturating_sub(1).min(total_size - 1);
+            let end = start
+                .saturating_add(chunk_size)
+                .saturating_sub(1)
+                .min(total_size - 1);
             chunks.push(Chunk {
                 start,
                 end,
