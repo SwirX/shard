@@ -1,0 +1,279 @@
+use crate::engine::error::DownloadError;
+use crate::engine::manager::{DownloadManager, DownloadOptions};
+use crate::engine::progress::ProgressEvent;
+use crate::engine::test_server::handler::{DelayProfile, ServerFeatures};
+use crate::engine::test_server::{TestServer, deterministic_body, expected_sha256};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::mpsc;
+
+fn scratch_path(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("shard-{name}"))
+}
+
+async fn collect_progress(body: Vec<u8>, features: ServerFeatures) -> (Vec<usize>, Vec<u8>, u64) {
+    let server = TestServer::spawn_with(body.clone(), features).await;
+    let dest = scratch_path("scrambled.bin");
+    let (tx, mut rx) = mpsc::channel::<ProgressEvent>(128);
+    let collector = tokio::spawn(async move {
+        let mut completions = Vec::new();
+        while let Some(event) = rx.recv().await {
+            if let ProgressEvent::ChunkComplete { index, .. } = event {
+                completions.push(index);
+            }
+        }
+        completions
+    });
+    let manager = DownloadManager::new().unwrap();
+    let outcome = manager
+        .download(
+            &DownloadOptions {
+                url: server.url(),
+                dest_path: dest.clone(),
+                chunk_size: 64 * 1024,
+                connections: 8,
+                max_attempts: 4,
+                retry_base_delay: std::time::Duration::from_millis(1),
+                ..Default::default()
+            },
+            Some(tx),
+        )
+        .await
+        .unwrap();
+    let completions = collector.await.unwrap();
+    let on_disk = std::fs::read(&dest).unwrap();
+    let _ = std::fs::remove_file(&dest);
+    (completions, on_disk, outcome.size)
+}
+
+#[tokio::test]
+async fn scrambled_completion_stays_byte_perfect() {
+    let body = deterministic_body(2 * 1024 * 1024, 424242);
+    let features = ServerFeatures {
+        delay: DelayProfile::Reverse { max_delay_ms: 300 },
+        fragment_bytes: Some(512),
+        ..Default::default()
+    };
+
+    let (completions, on_disk, size) = collect_progress(body.clone(), features).await;
+
+    assert_eq!(on_disk, body);
+    assert_eq!(size, body.len() as u64);
+    assert_eq!(completions.len(), 32);
+    assert!(
+        completions.windows(2).any(|pair| pair[0] > pair[1]),
+        "completion order must differ from chunk order"
+    );
+    let sorted: Vec<usize> = (0..32).collect();
+    assert_ne!(completions, sorted);
+}
+
+#[tokio::test]
+async fn failed_chunk_is_requeued_and_recovers() {
+    let body = deterministic_body(256 * 1024, 99);
+    let mut drop_once = HashMap::new();
+    drop_once.insert((0u64, 65535u64), 1);
+    let features = ServerFeatures {
+        drop_once: Arc::new(std::sync::Mutex::new(drop_once)),
+        ..Default::default()
+    };
+    let drop_tracker = Arc::clone(&features.drop_once);
+
+    let (completions, on_disk, _) = collect_progress(body.clone(), features).await;
+
+    assert_eq!(on_disk, body);
+    assert_eq!(completions.len(), 4);
+    let remaining = drop_tracker.lock().unwrap().get(&(0, 65535)).copied();
+    assert_eq!(
+        remaining,
+        Some(0),
+        "drop counter must be consumed exactly once"
+    );
+}
+
+#[tokio::test]
+async fn attempt_exhaustion_fails_deterministically() {
+    let body = deterministic_body(256 * 1024, 7);
+    let drop_forever = Arc::new([(0u64, 65535u64)].into_iter().collect());
+    let features = ServerFeatures {
+        drop_forever,
+        ..Default::default()
+    };
+    let server = TestServer::spawn_with(body.clone(), features).await;
+    let dest = scratch_path("exhaustion.bin");
+    let manager = DownloadManager::new().unwrap();
+    let result = manager
+        .download(
+            &DownloadOptions {
+                url: server.url(),
+                dest_path: dest.clone(),
+                chunk_size: 64 * 1024,
+                connections: 2,
+                max_attempts: 2,
+                retry_base_delay: std::time::Duration::from_millis(1),
+                ..Default::default()
+            },
+            None,
+        )
+        .await;
+
+    let _ = std::fs::remove_file(&dest);
+    match result {
+        Err(DownloadError::ChunksFailed(count)) => assert_eq!(count, 1),
+        Err(err) => panic!("expected ChunksFailed, got {err:?}"),
+        Ok(_) => panic!("expected download to fail"),
+    }
+}
+
+#[tokio::test]
+async fn progress_reports_total_clients_and_completion_order() {
+    let body = deterministic_body(128 * 1024, 5);
+    let expected_total = body.len() as u64;
+    let server = TestServer::spawn(body).await;
+    let dest = scratch_path("progress-events.bin");
+    let (tx, mut rx) = mpsc::channel::<ProgressEvent>(64);
+    let manager = DownloadManager::new().unwrap();
+    manager
+        .download(
+            &DownloadOptions {
+                url: server.url(),
+                dest_path: dest.clone(),
+                chunk_size: 64 * 1024,
+                connections: 2,
+                max_attempts: 3,
+                ..Default::default()
+            },
+            Some(tx),
+        )
+        .await
+        .unwrap();
+
+    let mut log = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        log.push(event);
+    }
+    let total = log
+        .iter()
+        .find_map(|event| match event {
+            ProgressEvent::Start { total, .. } => Some(*total),
+            _ => None,
+        })
+        .expect("Start event must precede all chunk events");
+    assert_eq!(total, expected_total);
+    let mut first_start: HashMap<usize, usize> = HashMap::new();
+    let mut last_complete: HashMap<usize, usize> = HashMap::new();
+    let mut reporting_workers: Vec<usize> = Vec::new();
+    for (position, event) in log.iter().enumerate() {
+        match event {
+            ProgressEvent::ChunkStarted { worker, index } => {
+                first_start.entry(*index).or_insert(position);
+                reporting_workers.push(*worker);
+            }
+            ProgressEvent::ChunkComplete { worker, index } => {
+                last_complete.insert(*index, position);
+                reporting_workers.push(*worker);
+            }
+            _ => {}
+        }
+    }
+    assert!(
+        reporting_workers.iter().all(|worker| *worker < 2),
+        "reported chunks must belong to one of the two spawned workers"
+    );
+    assert!(
+        reporting_workers.contains(&0) && reporting_workers.contains(&1),
+        "both workers must report chunks"
+    );
+    let mut started_ids: Vec<usize> = first_start.keys().copied().collect();
+    started_ids.sort();
+    assert_eq!(started_ids, vec![0, 1]);
+    let mut completed_ids: Vec<usize> = last_complete.keys().copied().collect();
+    completed_ids.sort();
+    assert_eq!(completed_ids, vec![0, 1]);
+    for index in [0usize, 1] {
+        assert!(
+            first_start[&index] < last_complete[&index],
+            "chunk {index} must be reported started before complete"
+        );
+    }
+    let _ = std::fs::remove_file(&dest);
+}
+
+#[tokio::test]
+async fn retry_backoff_paces_retry_attempts() {
+    let body = deterministic_body(128 * 1024, 1234);
+    let drop_forever = Arc::new([(0u64, 65535u64)].into_iter().collect());
+    let features = ServerFeatures {
+        drop_forever,
+        ..Default::default()
+    };
+    let server = TestServer::spawn_with(body.clone(), features).await;
+    let dest = scratch_path("backoff.bin");
+    let manager = DownloadManager::new().unwrap();
+
+    let started = Instant::now();
+    let result = manager
+        .download(
+            &DownloadOptions {
+                url: server.url(),
+                dest_path: dest.clone(),
+                chunk_size: 64 * 1024,
+                connections: 1,
+                max_attempts: 2,
+                retry_base_delay: std::time::Duration::from_millis(200),
+                retry_max_delay: std::time::Duration::from_secs(1),
+                ..Default::default()
+            },
+            None,
+        )
+        .await;
+    let elapsed = started.elapsed();
+
+    let _ = std::fs::remove_file(&dest);
+    assert!(matches!(result, Err(DownloadError::ChunksFailed(_))));
+    assert!(
+        elapsed >= std::time::Duration::from_millis(150),
+        "one failed attempt must wait the base backoff before retrying (took {elapsed:?})"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[ignore = "run manually: cargo test --release -- --ignored --nocapture throughput_benchmark"]
+async fn throughput_benchmark() {
+    let body = deterministic_body(64 * 1024 * 1024, 777);
+    let server = TestServer::spawn(body).await;
+    let expected = expected_sha256(&server.body);
+    let manager = DownloadManager::new().unwrap();
+
+    let mut rows = Vec::new();
+    for connections in [1usize, 2, 4, 8, 16] {
+        let dest = scratch_path(&format!("bench-{connections}.bin"));
+        let start = Instant::now();
+        let outcome = manager
+            .download(
+                &DownloadOptions {
+                    url: server.url(),
+                    dest_path: dest.clone(),
+                    chunk_size: 1024 * 1024,
+                    connections,
+                    max_attempts: 3,
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let elapsed = start.elapsed().as_secs_f64();
+        assert_eq!(outcome.sha256, expected);
+        let throughput = server.body.len() as f64 / 1_000_000.0 / elapsed;
+        rows.push(format!(
+            "{connections:>2} workers  {elapsed:>6.2}s  {throughput:>8.2} MB/s"
+        ));
+        let _ = std::fs::remove_file(&dest);
+    }
+    println!("\nshard throughput against local test server (64 MiB):");
+    for row in rows {
+        println!("{row}");
+    }
+}
