@@ -70,8 +70,8 @@ jobs:
         run: cargo build --release ${{ matrix.cargo_args }}
       - name: Rename binary
         run: cp target/${{ matrix.target }}/release/shard target/shard-${{ matrix.target }} 2>/dev/null || cp target/release/shard target/shard-${{ matrix.target }}
-      - name: Attach to release
-        uses: softprops/action-gh-release@v2
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
         with:
-          files: target/shard-*
-          fail_on_unmatched_files: true
+          name: shard-${{ matrix.target }}
+          path: target/shard-*
