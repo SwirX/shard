@@ -43,12 +43,15 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            cargo_args: ""
+            label: x86_64-linux-gnu
           - target: x86_64-unknown-linux-musl
-            cargo_args: "--target x86_64-unknown-linux-musl"
+            label: x86_64-linux-musl
           - target: aarch64-unknown-linux-gnu
-            cargo_args: "--target aarch64-unknown-linux-gnu"
+            label: aarch64-linux-gnu
     steps:
+      - name: Set archive name
+        run: |
+          echo "archive=shard-${GITHUB_REF_NAME#v}-${{ matrix.label }}" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - name: Install cross toolchain dependencies
         run: |
@@ -67,11 +70,11 @@ jobs:
         with:
           key: ${{ matrix.target }}
       - name: Build release
-        run: cargo build --release ${{ matrix.cargo_args }}
+        run: cargo build --release --target ${{ matrix.target }}
       - name: Rename binary
-        run: cp target/${{ matrix.target }}/release/shard target/shard-${{ matrix.target }} 2>/dev/null || cp target/release/shard target/shard-${{ matrix.target }}
+        run: cp target/${{ matrix.target }}/release/shard "${{ env.archive }}"
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: shard-${{ matrix.target }}
-          path: target/shard-*
+          name: "${{ env.archive }}"
+          path: "${{ env.archive }}"
