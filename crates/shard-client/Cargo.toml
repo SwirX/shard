@@ -1,0 +1,13 @@
+[package]
+name = "shard-client"
+version = "0.1.0"
+edition = "2024"
+description = "High-level client for the shard daemon used by the GUI and third-party apps"
+license = "MIT"
+authors = ["SwirX <swirxytb@gmail.com>"]
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "sync", "time", "net", "fs"] }
+serde_json = "1"
+shard-rpc = { path = "../shard-rpc" }
+shard-socket = { path = "../shard-socket" }

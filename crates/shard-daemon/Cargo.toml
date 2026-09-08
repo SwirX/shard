@@ -1,0 +1,12 @@
+[package]
+name = "shard-daemon"
+version = "0.1.0"
+edition = "2024"
+description = "Background shard service: owns downloads, registry, history and configuration"
+license = "MIT"
+authors = ["SwirX <swirxytb@gmail.com>"]
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "sync", "time", "process", "signal", "net", "fs"] }
+shard-rpc = { path = "../shard-rpc" }
+shard-socket = { path = "../shard-socket" }

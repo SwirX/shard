@@ -1,3 +1,13 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/shard-rpc",
+    "crates/shard-socket",
+    "crates/shard-daemon",
+    "crates/shard-client",
+    "crates/shard-native-host",
+]
+
 [package]
 name = "shard"
 version = "0.1.0"

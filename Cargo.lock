@@ -1227,6 +1227,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "shard-client"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "shard-rpc",
+ "shard-socket",
+ "tokio",
+]
+
+[[package]]
+name = "shard-daemon"
+version = "0.1.0"
+dependencies = [
+ "shard-rpc",
+ "shard-socket",
+ "tokio",
+]
+
+[[package]]
+name = "shard-native-host"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shard-client",
+ "shard-rpc",
+]
+
+[[package]]
+name = "shard-rpc"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "shard-socket"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "shard-rpc",
+ "tokio",
+]
+
+[[package]]
 name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

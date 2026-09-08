@@ -1,0 +1,12 @@
+[package]
+name = "shard-socket"
+version = "0.1.0"
+edition = "2024"
+description = "Unix-domain framing for the shard daemon protocol"
+license = "MIT"
+authors = ["SwirX <swirxytb@gmail.com>"]
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "sync", "time", "net", "fs"] }
+serde_json = "1"
+shard-rpc = { path = "../shard-rpc" }
