@@ -126,7 +126,7 @@ fn worker_minibar(ratio: f64, style: &Style) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shard::engine::progress::ProgressEvent;
+    use shard_core::engine::progress::ProgressEvent;
 
     fn tracker(events: Vec<ProgressEvent>) -> ProgressTracker {
         let mut tracker = ProgressTracker::new(3);

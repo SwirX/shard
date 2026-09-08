@@ -1,27 +1,25 @@
-[package]
-name = "shard"
+[workspace]
+resolver = "2"
+members = [
+    "crates/shard-core",
+    "crates/shard-cli",
+    "crates/shard-rpc",
+    "crates/shard-socket",
+    "crates/shard-daemon",
+    "crates/shard-client",
+    "crates/shard-native-host",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
-description = "Native concurrent HTTP range download engine"
 license = "MIT"
 authors = ["SwirX <swirxytb@gmail.com>"]
 
-[dependencies]
+[workspace.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time", "process", "signal"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
-futures-util = "0.3"
-bytes = "1"
-http = "1"
-url = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
-thiserror = "2"
-anyhow = "1"
-clap = { version = "4", features = ["derive", "env"] }
-crossterm = "0.29"
-toml = "0.9"
-rusqlite = { version = "0.40.2", features = ["bundled"] }
 
 [profile.release]
 lto = "thin"

@@ -1210,20 +1210,76 @@ name = "shard"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bytes",
  "clap",
  "crossterm",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "shard-core",
+ "tokio",
+ "toml",
+]
+
+[[package]]
+name = "shard-client"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "shard-rpc",
+ "shard-socket",
+ "tokio",
+]
+
+[[package]]
+name = "shard-core"
+version = "0.1.0"
+dependencies = [
+ "bytes",
  "futures-util",
  "http",
  "reqwest",
- "rusqlite",
  "serde",
  "serde_json",
  "sha2",
  "thiserror",
  "tokio",
- "toml",
  "url",
+]
+
+[[package]]
+name = "shard-daemon"
+version = "0.1.0"
+dependencies = [
+ "shard-rpc",
+ "shard-socket",
+ "tokio",
+]
+
+[[package]]
+name = "shard-native-host"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shard-client",
+ "shard-rpc",
+]
+
+[[package]]
+name = "shard-rpc"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "shard-socket"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "shard-rpc",
+ "tokio",
 ]
 
 [[package]]
