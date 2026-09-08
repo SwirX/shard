@@ -1,4 +1,4 @@
-use shard::engine::progress::ProgressEvent;
+use shard_core::engine::progress::ProgressEvent;
 use std::collections::HashMap;
 
 pub struct ProgressTracker {

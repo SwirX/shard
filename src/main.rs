@@ -1,6 +1,6 @@
 use crate::cli::style::{ColorChoice, Style};
 use clap::{Parser, Subcommand, ValueEnum};
-use shard::engine::{DownloadManager, DownloadOptions};
+use shard_core::engine::{DownloadManager, DownloadOptions};
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -144,7 +144,7 @@ async fn main() -> anyhow::Result<()> {
                 let base = expand_tilde(&conf.download.download_dir);
                 (
                     base.clone(),
-                    Some(shard::engine::FiletypeRouting {
+                    Some(shard_core::engine::FiletypeRouting {
                         dirs: [
                             ("video", conf.filetype.video.as_str()),
                             ("image", conf.filetype.image.as_str()),
@@ -356,7 +356,7 @@ async fn run_download_cli(
     let serve_socket = socket.clone();
     let serve_controller = handle.controller.clone();
     let socket_task = tokio::spawn(async move {
-        let _ = shard::engine::sockets::serve(&serve_socket, serve_controller, shutdown_rx).await;
+        let _ = shard_core::engine::sockets::serve(&serve_socket, serve_controller, shutdown_rx).await;
     });
     let renderer = if let Some(keys) = crate::cli::keys::spawn_key_listener(key_tx.clone()) {
         let renderer = tokio::spawn(crate::cli::render::run_progress_renderer(
@@ -404,7 +404,7 @@ async fn run_download_cli(
     if let Some(keys) = keys {
         let _ = keys.await;
     }
-    let status = if outcome.status == shard::engine::OutcomeStatus::Cancelled {
+    let status = if outcome.status == shard_core::engine::OutcomeStatus::Cancelled {
         registry::EntryStatus::Cancelled
     } else {
         registry::EntryStatus::Completed
