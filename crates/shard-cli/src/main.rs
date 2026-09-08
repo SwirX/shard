@@ -356,7 +356,8 @@ async fn run_download_cli(
     let serve_socket = socket.clone();
     let serve_controller = handle.controller.clone();
     let socket_task = tokio::spawn(async move {
-        let _ = shard_core::engine::sockets::serve(&serve_socket, serve_controller, shutdown_rx).await;
+        let _ =
+            shard_core::engine::sockets::serve(&serve_socket, serve_controller, shutdown_rx).await;
     });
     let renderer = if let Some(keys) = crate::cli::keys::spawn_key_listener(key_tx.clone()) {
         let renderer = tokio::spawn(crate::cli::render::run_progress_renderer(

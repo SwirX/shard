@@ -1,13 +1,13 @@
 [package]
 name = "shard-native-host"
-version = "0.1.0"
-edition = "2024"
 description = "Native Messaging bridge between browser extensions and the shard daemon"
-license = "MIT"
-authors = ["SwirX <swirxytb@gmail.com>"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
 shard-client = { path = "../shard-client" }
 shard-rpc = { path = "../shard-rpc" }
