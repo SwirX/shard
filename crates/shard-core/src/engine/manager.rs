@@ -756,7 +756,7 @@ mod tests {
             filename: "shard-resume-refused.bin".into(),
             remote: RemoteSnapshot {
                 size: body.len() as u64,
-                etag: Some("\"fake-{}-{}\"".to_string()),
+                etag: Some("\"different\"".to_string()),
                 last_modified: None,
             },
             chunk_size: 1024 * 1024,
