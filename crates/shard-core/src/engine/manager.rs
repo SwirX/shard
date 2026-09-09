@@ -209,7 +209,7 @@ async fn run_download(
             })
         }
         Ok(()) => {
-            let sha256 = hash_file(&dest_path)?;
+            let sha256 = hash_file(&dest_path).await?;
             checkpoint.set_integrity_sha(sha256.clone());
             checkpoint.finish().await?;
             Ok(DownloadOutcome {
@@ -317,7 +317,7 @@ async fn run_single_stream(
     };
     match download_single_stream(client, writer, controller, &spec, progress_tx).await {
         Ok(()) => {
-            let sha256 = hash_file(dest)?;
+            let sha256 = hash_file(dest).await?;
             let template = manifest_template(options, remote, dest, remote.size.max(1));
             let manifest = template.into_manifest(
                 vec![ChunkEntry {
@@ -474,7 +474,16 @@ fn url_basename(final_url: &str) -> Option<String> {
     if name.is_empty() { None } else { Some(name) }
 }
 
-fn hash_file(path: &Path) -> DownloadResult<String> {
+async fn hash_file(path: &Path) -> DownloadResult<String> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || hash_file_sync(&path))
+        .await
+        .map_err(|err| {
+            DownloadError::Io(std::io::Error::other(format!("hash task failed: {err}")))
+        })?
+}
+
+fn hash_file_sync(path: &Path) -> DownloadResult<String> {
     use std::io::Read;
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha256Hasher::new();
