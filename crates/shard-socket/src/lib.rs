@@ -7,18 +7,25 @@
 
 use async_trait::async_trait;
 use shard_rpc::framing::{decode_frame, encode_frame};
-use shard_rpc::{Request, Response};
+use shard_rpc::{DownloadInfo, Request, Response, ServerEvent};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 pub use tokio::net::UnixListener;
 use tokio::net::UnixStream;
+use tokio::sync::broadcast;
 
 #[async_trait]
 pub trait Handler: Send + Sync + 'static {
     /// Handle one request. Returning `None` closes the connection; returning a
     /// response keeps it open for the next line.
     async fn handle(&self, request: Request) -> Option<Response>;
+
+    /// Current download set, pushed to a client the moment it starts watching.
+    async fn snapshot(&self) -> Vec<DownloadInfo>;
+
+    /// Subscribe to download snapshots (see [`shard_rpc::Request::Watch`]).
+    async fn watch(&self) -> Option<broadcast::Receiver<Vec<DownloadInfo>>>;
 }
 
 /// Accept connections forever, running each on its own task.
@@ -47,6 +54,23 @@ async fn handle_connection(
         let Ok(request) = decode_frame::<Request>(line.as_bytes()) else {
             continue;
         };
+        if request == Request::Watch {
+            let snapshot = handler.snapshot().await;
+            let frame = ServerEvent::Snapshot {
+                downloads: snapshot,
+            };
+            writer.write_all(&encode_frame(&frame)).await?;
+            writer.flush().await?;
+            let mut events = handler.watch().await.ok_or_else(|| {
+                std::io::Error::other("handler does not support streaming snapshots")
+            })?;
+            while let Ok(downloads) = events.recv().await {
+                let frame = ServerEvent::Snapshot { downloads };
+                writer.write_all(&encode_frame(&frame)).await?;
+                writer.flush().await?;
+            }
+            return Ok(());
+        }
         let Some(response) = handler.handle(request).await else {
             return Ok(());
         };
@@ -75,6 +99,23 @@ impl Client {
         read_line(&mut self.stream, &mut line).await?;
         decode_frame::<Response>(&line).map_err(std::io::Error::other)
     }
+
+    /// Send a [`Request::Watch`]; subsequent [`Self::next_event`] calls return
+    /// the snapshot stream instead of a response.
+    pub async fn watch(&mut self) -> std::io::Result<()> {
+        self.stream
+            .write_all(&encode_frame(&Request::Watch))
+            .await?;
+        self.stream.flush().await?;
+        Ok(())
+    }
+
+    /// Read one server-pushed event (used after [`Self::watch`]).
+    pub async fn next_event(&mut self) -> std::io::Result<ServerEvent> {
+        let mut line = Vec::new();
+        read_line(&mut self.stream, &mut line).await?;
+        decode_frame::<ServerEvent>(&line).map_err(std::io::Error::other)
+    }
 }
 
 async fn read_line(stream: &mut UnixStream, out: &mut Vec<u8>) -> std::io::Result<()> {
@@ -98,7 +139,6 @@ async fn read_line(stream: &mut UnixStream, out: &mut Vec<u8>) -> std::io::Resul
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::net::UnixListener;
 
     struct PingHandler;
 
@@ -112,6 +152,14 @@ mod tests {
                     message: "only Ping is handled in tests".into(),
                 }),
             }
+        }
+
+        async fn snapshot(&self) -> Vec<DownloadInfo> {
+            Vec::new()
+        }
+
+        async fn watch(&self) -> Option<broadcast::Receiver<Vec<DownloadInfo>>> {
+            None
         }
     }
 
@@ -134,6 +182,77 @@ mod tests {
 
         client.stream.shutdown().await.unwrap();
         assert!(client.request(&Request::Ping).await.is_err());
+        serve.abort();
+        let _ = std::fs::remove_file(&path);
+    }
+
+    struct WatchHandler {
+        snap: Vec<DownloadInfo>,
+        bus: broadcast::Sender<Vec<DownloadInfo>>,
+    }
+
+    #[async_trait]
+    impl Handler for WatchHandler {
+        async fn handle(&self, request: Request) -> Option<Response> {
+            match request {
+                Request::Ping => Some(Response::Pong),
+                _ => Some(Response::Error {
+                    code: "unsupported".into(),
+                    message: "only Ping is handled in tests".into(),
+                }),
+            }
+        }
+
+        async fn snapshot(&self) -> Vec<DownloadInfo> {
+            self.snap.clone()
+        }
+
+        async fn watch(&self) -> Option<broadcast::Receiver<Vec<DownloadInfo>>> {
+            Some(self.bus.subscribe())
+        }
+    }
+
+    #[tokio::test]
+    async fn watch_streams_snapshots_over_a_unix_socket() {
+        let dir = std::env::temp_dir().join("shard-socket-test-watch");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("control.sock");
+        let _ = std::fs::remove_file(&path);
+        let listener = UnixListener::bind(&path).unwrap();
+
+        let entry = DownloadInfo {
+            id: "dl-1".into(),
+            url: "https://example.test/one".into(),
+            dest: "/tmp/one".into(),
+            status: shard_rpc::DownloadStatus::Downloading,
+            size: 10_000,
+            done_bytes: 1024,
+            sha256: String::new(),
+            error: None,
+        };
+        let (bus, _) = broadcast::channel(16);
+        let handler: Arc<dyn Handler> = Arc::new(WatchHandler {
+            snap: vec![entry.clone()],
+            bus: bus.clone(),
+        });
+        let serve = tokio::spawn(async move { serve(listener, handler).await });
+
+        let mut client = Client::connect(&path).await.unwrap();
+        client.watch().await.unwrap();
+
+        let first = client.next_event().await.unwrap();
+        assert!(matches!(
+            first,
+            ServerEvent::Snapshot { downloads } if downloads == vec![entry.clone()]
+        ));
+
+        let _ = bus.send(vec![entry.clone()]);
+        let second = client.next_event().await.unwrap();
+        assert!(matches!(
+            second,
+            ServerEvent::Snapshot { downloads } if downloads == vec![entry]
+        ));
+
         serve.abort();
         let _ = std::fs::remove_file(&path);
     }

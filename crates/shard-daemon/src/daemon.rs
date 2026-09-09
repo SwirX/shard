@@ -1,7 +1,9 @@
 use crate::Backend;
+use shard_rpc::DownloadInfo;
 use shard_socket::{Handler, UnixListener, serve};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::sync::broadcast;
 use tokio::sync::watch;
 
 /// Name of the control socket inside the daemon's run directory
@@ -66,5 +68,13 @@ struct HandlerBridge<B> {
 impl<B: Backend> Handler for HandlerBridge<B> {
     async fn handle(&self, request: shard_rpc::Request) -> Option<shard_rpc::Response> {
         Some(self.backend.handle(request).await)
+    }
+
+    async fn snapshot(&self) -> Vec<DownloadInfo> {
+        self.backend.snapshot().await
+    }
+
+    async fn watch(&self) -> Option<broadcast::Receiver<Vec<DownloadInfo>>> {
+        Some(self.backend.watch().await)
     }
 }
