@@ -17,8 +17,4 @@ pub enum ProgressEvent {
         worker: usize,
         index: usize,
     },
-    Finite {
-        total: u64,
-        done: u64,
-    },
 }

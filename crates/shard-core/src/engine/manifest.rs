@@ -1,7 +1,5 @@
 use crate::engine::error::{DownloadError, DownloadResult};
 use serde::{Deserialize, Serialize};
-use std::fs::File;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub const MANIFEST_VERSION: u32 = 1;
@@ -115,23 +113,7 @@ fn with_suffix(dest: &Path, suffix: &str) -> PathBuf {
 fn write_json_atomic(dest: &Path, body: &[u8]) -> DownloadResult<()> {
     let target = sidecar_path(dest);
     let tmp = tmp_path(dest);
-    let mut file = File::create(&tmp)?;
-    file.write_all(body)?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(&tmp, &target)?;
-    sync_parent(&target)?;
-    Ok(())
-}
-
-fn sync_parent(path: &Path) -> DownloadResult<()> {
-    let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    else {
-        return Ok(());
-    };
-    File::open(parent)?.sync_all()?;
+    crate::fsutil::atomic_replace(&tmp, &target, body)?;
     Ok(())
 }
 

@@ -55,6 +55,9 @@ impl History {
 
     /// Insert or fully replace the row for this id.
     pub fn record(&self, entry: &HistoryEntry) -> std::io::Result<()> {
+        use std::io::Error as IoError;
+        let size = i64::try_from(entry.size)
+            .map_err(|_| IoError::other(format!("size {} exceeds i64", entry.size)))?;
         self.conn
             .execute(
                 "INSERT OR REPLACE INTO downloads
@@ -66,7 +69,7 @@ impl History {
                     entry.final_url,
                     entry.dest.to_string_lossy(),
                     entry.status.to_string(),
-                    entry.size as i64,
+                    size,
                     entry.sha256,
                     entry.started_at,
                     entry.updated_at,
@@ -92,7 +95,11 @@ impl History {
                     final_url: row.get(2)?,
                     dest: PathBuf::from(row.get::<_, String>(3)?),
                     status: parse_status(&row.get::<_, String>(4)?),
-                    size: row.get::<_, i64>(5)? as u64,
+                    size: {
+                        let raw = row.get::<_, i64>(5)?;
+                        u64::try_from(raw)
+                            .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(5, raw))?
+                    },
                     sha256: row.get(6)?,
                     started_at: row.get(7)?,
                     updated_at: row.get(8)?,
@@ -119,7 +126,11 @@ impl History {
                     final_url: row.get(2)?,
                     dest: PathBuf::from(row.get::<_, String>(3)?),
                     status: parse_status(&row.get::<_, String>(4)?),
-                    size: row.get::<_, i64>(5)? as u64,
+                    size: {
+                        let raw = row.get::<_, i64>(5)?;
+                        u64::try_from(raw)
+                            .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(5, raw))?
+                    },
                     sha256: row.get(6)?,
                     started_at: row.get(7)?,
                     updated_at: row.get(8)?,

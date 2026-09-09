@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,20 +49,9 @@ impl Registry {
         Self::entries_dir().join(format!("{id}.json"))
     }
 
-    fn write_atomic(path: &PathBuf, entry: &Entry) -> std::io::Result<()> {
-        std::fs::create_dir_all(path.parent().expect("entry has a parent"))?;
+    fn write_atomic(path: &Path, entry: &Entry) -> std::io::Result<()> {
         let body = serde_json::to_vec_pretty(entry).expect("entry serializes");
-        let tmp = path.with_extension("tmp");
-        {
-            let mut file = std::fs::File::create(&tmp)?;
-            file.write_all(&body)?;
-            file.sync_all()?;
-        }
-        std::fs::rename(&tmp, path)?;
-        if let Some(parent) = path.parent() {
-            std::fs::File::open(parent)?.sync_all()?;
-        }
-        Ok(())
+        shard_core::fsutil::atomic_write(path, &body)
     }
 
     pub fn load() -> Registry {
