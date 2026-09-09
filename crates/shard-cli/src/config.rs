@@ -213,10 +213,19 @@ impl Config {
     fn set_at(path: &Path, key: &str, value: &str) -> std::io::Result<()> {
         let (section, field, parsed) = parse_set_value(key, value)?;
         std::fs::create_dir_all(path.parent().expect("config always has a parent directory"))?;
-        let mut doc: toml::Table = std::fs::read_to_string(path)
-            .ok()
-            .and_then(|body| toml::from_str(&body).ok())
-            .unwrap_or_default();
+        let mut doc: toml::Table = match std::fs::read_to_string(path) {
+            Ok(body) => match toml::from_str(&body) {
+                Ok(table) => table,
+                Err(err) => {
+                    eprintln!(
+                        "warning: ignoring corrupt config {}: {err}; existing values are lost",
+                        path.display()
+                    );
+                    toml::Table::new()
+                }
+            },
+            Err(_) => toml::Table::new(),
+        };
         let table = doc
             .entry(section.as_str().to_string())
             .or_insert_with(|| toml::Value::Table(toml::Table::new()));
