@@ -56,9 +56,8 @@ impl History {
     /// Insert or fully replace the row for this id.
     pub fn record(&self, entry: &HistoryEntry) -> std::io::Result<()> {
         use std::io::Error as IoError;
-        let size = i64::try_from(entry.size).map_err(|_| {
-            IoError::other(format!("size {} exceeds i64", entry.size))
-        })?;
+        let size = i64::try_from(entry.size)
+            .map_err(|_| IoError::other(format!("size {} exceeds i64", entry.size)))?;
         self.conn
             .execute(
                 "INSERT OR REPLACE INTO downloads
