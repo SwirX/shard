@@ -1,6 +1,5 @@
 use crate::cli::style::ColorChoice;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -204,7 +203,7 @@ impl Config {
             )));
         }
         std::fs::create_dir_all(path.parent().expect("config always has a parent directory"))?;
-        write_atomic(path, SHARD_CONF_SAMPLE)
+        shard_core::fsutil::atomic_write(path, SHARD_CONF_SAMPLE.as_bytes())
     }
 
     pub fn set(key: &str, value: &str) -> std::io::Result<()> {
@@ -225,9 +224,11 @@ impl Config {
             .as_table_mut()
             .ok_or_else(|| std::io::Error::other("config section is not a table"))?;
         table.insert(field.to_string(), parsed);
-        write_atomic(
+        shard_core::fsutil::atomic_write(
             path,
-            &toml::to_string(&doc).expect("re-serializing toml cannot fail"),
+            toml::to_string(&doc)
+                .expect("re-serializing toml cannot fail")
+                .as_bytes(),
         )
     }
 
@@ -355,20 +356,6 @@ fn parse_positive(value: &str, field: &str) -> std::io::Result<i64> {
         )));
     }
     Ok(parsed)
-}
-
-fn write_atomic(path: &Path, body: &str) -> std::io::Result<()> {
-    let tmp = path.with_extension("tmp");
-    {
-        let mut file = std::fs::File::create(&tmp)?;
-        file.write_all(body.as_bytes())?;
-        file.sync_all()?;
-    }
-    std::fs::rename(&tmp, path)?;
-    if let Some(parent) = path.parent() {
-        std::fs::File::open(parent)?.sync_all()?;
-    }
-    Ok(())
 }
 
 const SHARD_CONF_SAMPLE: &str = r#"# shard.conf - at ~/.config/shard/shard.conf (or $XDG_CONFIG_HOME/shard/shard.conf)
