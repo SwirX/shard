@@ -11,7 +11,8 @@ use shard_rpc::{Request, Response};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
+pub use tokio::net::UnixListener;
+use tokio::net::UnixStream;
 
 #[async_trait]
 pub trait Handler: Send + Sync + 'static {
@@ -126,7 +127,10 @@ mod tests {
         let serve = tokio::spawn(async move { serve(listener, handler).await });
 
         let mut client = Client::connect(&path).await.unwrap();
-        assert_eq!(client.request(&Request::Ping).await.unwrap(), Response::Pong);
+        assert_eq!(
+            client.request(&Request::Ping).await.unwrap(),
+            Response::Pong
+        );
 
         client.stream.shutdown().await.unwrap();
         assert!(client.request(&Request::Ping).await.is_err());

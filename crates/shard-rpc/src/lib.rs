@@ -61,9 +61,7 @@ pub enum Response {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerEvent {
-    Snapshot {
-        downloads: Vec<DownloadInfo>,
-    },
+    Snapshot { downloads: Vec<DownloadInfo> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

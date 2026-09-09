@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 
 mod cli;
 mod config;
+mod daemon;
 mod history;
 mod registry;
 
@@ -74,6 +75,10 @@ enum Command {
     Redo {
         #[arg(value_name = "ID|URL")]
         id_or_url: String,
+    },
+    Daemon {
+        #[arg(long, help = "extra verbose logging for the daemon startup sequence")]
+        verbose: bool,
     },
 }
 
@@ -187,6 +192,10 @@ async fn main() -> anyhow::Result<()> {
         Command::Resume { id } => resume_cli(&id).await?,
         Command::History => history_cli()?,
         Command::Redo { id_or_url } => redo_cli(&id_or_url).await?,
+        Command::Daemon { verbose } => {
+            let _ = verbose;
+            daemon::run().await?;
+        }
     }
     Ok(())
 }

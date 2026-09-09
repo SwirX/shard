@@ -2,8 +2,8 @@
 //! clients. Every message is exactly one line: serde_json never emits raw
 //! newlines inside a value, so the boundary stays unambiguous.
 
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 pub fn encode_frame(message: &impl Serialize) -> Vec<u8> {
     let mut frame = serde_json::to_vec(message).expect("protocol messages always serialize");
@@ -39,6 +39,9 @@ mod tests {
         let mut crlf = frame;
         crlf.pop();
         crlf.extend_from_slice(b"\r\n");
-        assert_eq!(decode_frame::<serde_json::Value>(&crlf).unwrap()["ok"], true);
+        assert_eq!(
+            decode_frame::<serde_json::Value>(&crlf).unwrap()["ok"],
+            true
+        );
     }
 }
