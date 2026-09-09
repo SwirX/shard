@@ -56,7 +56,6 @@ impl ProgressTracker {
                     self.worker_active_chunk[worker] = None;
                 }
             }
-            ProgressEvent::Finite { .. } => {}
         }
     }
 
