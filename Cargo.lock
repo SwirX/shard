@@ -1275,10 +1275,10 @@ dependencies = [
 name = "shard-native-host"
 version = "0.1.0"
 dependencies = [
- "serde",
  "serde_json",
  "shard-client",
  "shard-rpc",
+ "tokio",
 ]
 
 [[package]]

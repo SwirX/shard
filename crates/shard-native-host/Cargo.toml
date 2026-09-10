@@ -6,8 +6,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[[bin]]
+name = "shard-native-host"
+path = "src/main.rs"
+
 [dependencies]
-serde = { workspace = true }
+tokio = { workspace = true }
 serde_json = { workspace = true }
 shard-client = { path = "../shard-client" }
 shard-rpc = { path = "../shard-rpc" }
