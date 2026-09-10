@@ -1275,6 +1275,7 @@ dependencies = [
 name = "shard-native-host"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "serde_json",
  "shard-client",
  "shard-rpc",

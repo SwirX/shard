@@ -1,15 +1,70 @@
+use clap::{Parser, Subcommand};
 use shard_client::Client;
-use shard_native_host::{read_frame, write_frame};
+use shard_native_host::{Browser, read_frame, write_frame};
 use shard_rpc::{Request, ServerEvent};
 use std::io;
 use std::sync::mpsc;
 
-/// Relay requests between the browser's native-messaging pipe and the daemon.
-///
-/// Standard input is read on the main thread; replies and watch snapshots are
-/// handed to a dedicated stdout thread via a channel so the async runtime
-/// never borrows the (non-Send) terminal streams.
+#[derive(Parser)]
+#[command(
+    name = "shard-native-host",
+    version,
+    about = "Script shard's native-messaging bridge or run it"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Write browser native-messaging manifests pointing at this binary.
+    Install {
+        #[arg(
+            long,
+            help = "extension id to allow (repeatable; default one placeholder)"
+        )]
+        extension: Vec<String>,
+        #[arg(long, value_enum, help = "only write the manifest for this browser")]
+        browser: Option<Browser>,
+    },
+}
+
+/// Relay requests between the browser's native-messaging pipe and the daemon,
+/// or act on the `install` subcommand when given.
 fn main() -> io::Result<()> {
+    let cli = Cli::parse();
+    if let Some(Command::Install { extension, browser }) = cli.command {
+        return install(&extension, browser);
+    }
+    run_bridge()
+}
+
+fn install(extensions: &[String], browser: Option<Browser>) -> io::Result<()> {
+    let host_path = std::env::current_exe()?;
+    let browsers = match browser {
+        Some(browser) => vec![browser],
+        None => vec![Browser::Firefox, Browser::Chrome, Browser::Chromium],
+    };
+    for browser in browsers {
+        let file = shard_native_host::install(browser, &host_path, extensions)?;
+        println!("{} -> {}", browser_short(browser), file.display());
+    }
+    Ok(())
+}
+
+fn browser_short(browser: Browser) -> &'static str {
+    match browser {
+        Browser::Firefox => "firefox",
+        Browser::Chrome => "google-chrome",
+        Browser::Chromium => "chromium",
+    }
+}
+
+/// The streaming bridge itself. Standard input is read on the main thread;
+/// replies and watch snapshots go to a dedicated stdout thread via a channel
+/// so the async runtime never borrows the (non-Send) terminal streams.
+fn run_bridge() -> io::Result<()> {
     let mut stdin = io::stdin().lock();
 
     let (frames_tx, frames_rx) = mpsc::channel::<Vec<u8>>();
