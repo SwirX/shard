@@ -1,0 +1,13 @@
+[package]
+name = "shard-client"
+description = "High-level client for the shard daemon used by the GUI and third-party apps"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+serde_json = { workspace = true }
+shard-rpc = { path = "../shard-rpc" }
+shard-socket = { path = "../shard-socket" }

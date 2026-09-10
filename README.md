@@ -27,7 +27,7 @@ parallel and writes them straight into the final file at their own offsets.
 Requires a Rust toolchain (2024 edition).
 
 ```sh
-cargo install --path .
+cargo install --path crates/shard-cli
 ```
 
 ## Usage
@@ -125,12 +125,16 @@ remote identity before deciding how much to re-fetch.
 
 ## Layout
 
+Cargo workspace. Every crate tracks a clear boundary:
+
 ```
-src/engine/       the download engine (metadata, planner, worker, writer, ...)
-src/cli/          subcommands, renderer, control socket client
-src/history.rs    SQLite history store
-src/registry.rs   per-download entry registry (status, pid, control sockets)
-src/config.rs     TOML configuration
+crates/shard-core/       the download engine (metadata, planner, worker, writer, ...)
+crates/shard-cli/        CLI: subcommands, renderer, control socket client, history, registry
+crates/shard-rpc/        versioned wire protocol between clients and the daemon
+crates/shard-socket/     unix-domain framing for the daemon protocol
+crates/shard-daemon/     background service owning downloads, history, registry and config
+crates/shard-client/     high-level daemon client for the GUI and third-party apps
+crates/shard-native-host/ Native Messaging bridge for browser extensions
 ```
 
 ## License

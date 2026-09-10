@@ -1,6 +1,6 @@
 use crate::cli::style::{ColorChoice, Style};
 use clap::{Parser, Subcommand, ValueEnum};
-use shard::engine::{DownloadManager, DownloadOptions};
+use shard_core::engine::{DownloadManager, DownloadOptions};
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 
 mod cli;
 mod config;
+mod daemon;
 mod history;
 mod registry;
 
@@ -52,6 +53,14 @@ enum Command {
         eyecandy: Option<bool>,
         #[arg(long, value_enum, help = "colorize output (overrides shard.conf)")]
         color: Option<ColorArg>,
+        #[arg(
+            long = "daemon",
+            conflicts_with = "inline",
+            help = "attach to the running daemon; error if none is listening"
+        )]
+        via_daemon: bool,
+        #[arg(long, help = "download inline even if a daemon is running")]
+        inline: bool,
     },
     Config {
         #[command(subcommand)]
@@ -74,6 +83,10 @@ enum Command {
     Redo {
         #[arg(value_name = "ID|URL")]
         id_or_url: String,
+    },
+    Daemon {
+        #[arg(long, help = "extra verbose logging for the daemon startup sequence")]
+        verbose: bool,
     },
 }
 
@@ -131,11 +144,37 @@ async fn main() -> anyhow::Result<()> {
             max_attempts,
             eyecandy,
             color,
+            via_daemon,
+            inline,
         } => {
             let url = match url {
                 Some(url) => url,
                 None => clipboard_url()?,
             };
+            if !inline {
+                let dest = output
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().into_owned());
+                let conn = connections.map(|value| value as u32);
+                match daemon::attach_download(&url, dest.as_deref(), conn).await? {
+                    daemon::Attach::Started(id) => {
+                        println!("started {id} in the daemon");
+                        println!("  watch via: shard status {id}");
+                        return Ok(());
+                    }
+                    daemon::Attach::Unreachable if !via_daemon => {
+                        eprintln!(
+                            "shard: no daemon running, downloading inline (use --daemon to force)"
+                        );
+                    }
+                    daemon::Attach::Unreachable => {
+                        anyhow::bail!(
+                            "daemon requested (--daemon) but not listening on {}",
+                            daemon::control_socket_path().display()
+                        );
+                    }
+                }
+            }
             let style = resolve_style(eyecandy, color.map(Into::into))?;
             let conf = config::Config::load()?;
             let (dest_path, routing) = if let Some(output) = output {
@@ -144,7 +183,7 @@ async fn main() -> anyhow::Result<()> {
                 let base = expand_tilde(&conf.download.download_dir);
                 (
                     base.clone(),
-                    Some(shard::engine::FiletypeRouting {
+                    Some(shard_core::engine::FiletypeRouting {
                         dirs: [
                             ("video", conf.filetype.video.as_str()),
                             ("image", conf.filetype.image.as_str()),
@@ -187,6 +226,10 @@ async fn main() -> anyhow::Result<()> {
         Command::Resume { id } => resume_cli(&id).await?,
         Command::History => history_cli()?,
         Command::Redo { id_or_url } => redo_cli(&id_or_url).await?,
+        Command::Daemon { verbose } => {
+            let _ = verbose;
+            daemon::run().await?;
+        }
     }
     Ok(())
 }
@@ -356,7 +399,8 @@ async fn run_download_cli(
     let serve_socket = socket.clone();
     let serve_controller = handle.controller.clone();
     let socket_task = tokio::spawn(async move {
-        let _ = shard::engine::sockets::serve(&serve_socket, serve_controller, shutdown_rx).await;
+        let _ =
+            shard_core::engine::sockets::serve(&serve_socket, serve_controller, shutdown_rx).await;
     });
     let renderer = if let Some(keys) = crate::cli::keys::spawn_key_listener(key_tx.clone()) {
         let renderer = tokio::spawn(crate::cli::render::run_progress_renderer(
@@ -404,7 +448,7 @@ async fn run_download_cli(
     if let Some(keys) = keys {
         let _ = keys.await;
     }
-    let status = if outcome.status == shard::engine::OutcomeStatus::Cancelled {
+    let status = if outcome.status == shard_core::engine::OutcomeStatus::Cancelled {
         registry::EntryStatus::Cancelled
     } else {
         registry::EntryStatus::Completed

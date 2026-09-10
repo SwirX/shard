@@ -27,3 +27,4 @@ pub use manager::{
     DownloadHandle, DownloadManager, DownloadOptions, DownloadOutcome, FiletypeRouting,
     OutcomeStatus,
 };
+pub use progress::ProgressEvent;

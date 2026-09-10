@@ -1,7 +1,7 @@
 use crate::cli::lines::{FrameStats, summary_line, worker_lines};
 use crate::cli::state::ProgressTracker;
 use crate::cli::style::Style;
-use shard::engine::progress::ProgressEvent;
+use shard_core::engine::progress::ProgressEvent;
 use std::io::{IsTerminal, Write};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;

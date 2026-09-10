@@ -1,0 +1,13 @@
+[package]
+name = "shard-daemon"
+description = "Background shard service: owns downloads, registry, history and configuration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+shard-rpc = { path = "../shard-rpc" }
+shard-socket = { path = "../shard-socket" }
+tokio = { workspace = true, features = ["net"] }
+async-trait = "0.1"

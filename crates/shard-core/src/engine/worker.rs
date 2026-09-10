@@ -159,7 +159,7 @@ impl WorkerPool {
         if response.status() != http::StatusCode::PARTIAL_CONTENT {
             return Err(DownloadError::RangeUnsupported);
         }
-        validate_content_range(response.headers(), start, self.metadata.size)?;
+        validate_content_range(response.headers(), start, end, self.metadata.size)?;
 
         let mut stream = response.bytes_stream();
         let mut written = 0u64;
@@ -181,6 +181,12 @@ impl WorkerPool {
         }
         self.flush_buffer(&mut buffer, &mut written, start, index, worker_id)
             .await?;
+        let expected_len = end.saturating_sub(start) + 1;
+        if written != expected_len {
+            return Err(DownloadError::InvalidArgument(format!(
+                "chunk {index}: received {written} bytes, expected {expected_len}"
+            )));
+        }
         if let Some(tx) = &self.progress_tx {
             let _ = tx.try_send(ProgressEvent::ChunkComplete {
                 worker: worker_id,
@@ -235,6 +241,7 @@ impl ChunkExit {
 pub fn validate_content_range(
     headers: &http::HeaderMap,
     expected_start: u64,
+    expected_end: u64,
     total: u64,
 ) -> DownloadResult<()> {
     let value = headers
@@ -247,11 +254,22 @@ pub fn validate_content_range(
     let (range, declared_total) = spec
         .split_once('/')
         .ok_or(DownloadError::RangeUnsupported)?;
-    let (start, _) = range
+    let (start, end) = range
         .split_once('-')
         .ok_or(DownloadError::RangeUnsupported)?;
-    if start.parse::<u64>() != Ok(expected_start) {
+    let start = start
+        .parse::<u64>()
+        .map_err(|_| DownloadError::RangeUnsupported)?;
+    let end = end
+        .parse::<u64>()
+        .map_err(|_| DownloadError::RangeUnsupported)?;
+    if start != expected_start {
         return Err(DownloadError::RangeUnsupported);
+    }
+    if end != expected_end {
+        return Err(DownloadError::InvalidArgument(format!(
+            "content-range end {end} does not match requested end {expected_end}"
+        )));
     }
     if declared_total.parse::<u64>() != Ok(total) {
         return Err(DownloadError::RangeUnsupported);

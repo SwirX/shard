@@ -1,0 +1,18 @@
+[package]
+name = "shard-native-host"
+description = "Native Messaging bridge between browser extensions and the shard daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "shard-native-host"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+serde_json = { workspace = true }
+shard-client = { path = "../shard-client" }
+shard-rpc = { path = "../shard-rpc" }

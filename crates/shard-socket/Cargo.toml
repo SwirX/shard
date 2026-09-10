@@ -1,0 +1,12 @@
+[package]
+name = "shard-socket"
+description = "Unix-domain framing for the shard daemon protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tokio = { workspace = true, features = ["net", "io-util"] }
+async-trait = "0.1"
+shard-rpc = { path = "../shard-rpc" }
