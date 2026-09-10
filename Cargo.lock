@@ -1230,6 +1230,7 @@ dependencies = [
  "shard-core",
  "shard-daemon",
  "shard-rpc",
+ "shard-socket",
  "tokio",
  "toml",
 ]

@@ -12,6 +12,48 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, broadcast, mpsc, watch};
 
+/// Result of asking the daemon to take over a download.
+pub enum Attach {
+    /// Handed off to the running daemon, which owns it from now on.
+    Started(String),
+    /// No daemon is listening on the control socket.
+    Unreachable,
+}
+
+/// Ask the daemon to start `url`; the caller decides what to do when no
+/// daemon is running. Explicit `dest`/`connections` are forwarded, everything
+/// else comes from the daemon's own config.
+pub async fn attach_download(
+    url: &str,
+    dest: Option<&str>,
+    connections: Option<u32>,
+) -> anyhow::Result<Attach> {
+    let socket = control_socket_path();
+    let mut client = match shard_socket::Client::connect(&socket).await {
+        Ok(client) => client,
+        Err(_) => return Ok(Attach::Unreachable),
+    };
+    match client
+        .request(&Request::Start {
+            url: url.to_string(),
+            dest: dest.map(|value| value.to_string()),
+            connections,
+        })
+        .await?
+    {
+        Response::Started { id } => Ok(Attach::Started(id)),
+        Response::Error { code, message } => Err(anyhow::anyhow!(
+            "daemon refused to start ({code}): {message}"
+        )),
+        other => Err(anyhow::anyhow!("unexpected daemon reply: {other:?}")),
+    }
+}
+
+/// Location of the daemon's control socket (run dir + socket name).
+pub fn control_socket_path() -> PathBuf {
+    data_dir().join("run").join(shard_daemon::SOCKET_NAME)
+}
+
 /// Run the `shard daemon` subcommand: own the download engine, the registry,
 /// history and the control socket until interrupted.
 pub async fn run() -> anyhow::Result<()> {
