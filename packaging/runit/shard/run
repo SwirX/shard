@@ -1,0 +1,6 @@
+#!/bin/sh
+# runit user service for shard: supervised, restarts on exit.
+# Place inside the runit service dir (e.g. ~/.local/share/runit/shard/run).
+# chpst is available in runit's standard build.
+exec 2>&1
+exec chpst -u "$USER" "$HOME/.local/bin/shard" daemon

@@ -12,8 +12,12 @@ path = "src/main.rs"
 
 [dependencies]
 shard-core = { path = "../shard-core" }
+shard-daemon = { path = "../shard-daemon" }
+shard-rpc = { path = "../shard-rpc" }
+shard-socket = { path = "../shard-socket" }
 tokio = { workspace = true }
 anyhow = "1"
+async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env"] }
 crossterm = "0.29"
 rusqlite = { version = "0.40.2", features = ["bundled"] }

@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 
 mod cli;
 mod config;
+mod daemon;
 mod history;
 mod registry;
 
@@ -52,6 +53,14 @@ enum Command {
         eyecandy: Option<bool>,
         #[arg(long, value_enum, help = "colorize output (overrides shard.conf)")]
         color: Option<ColorArg>,
+        #[arg(
+            long = "daemon",
+            conflicts_with = "inline",
+            help = "attach to the running daemon; error if none is listening"
+        )]
+        via_daemon: bool,
+        #[arg(long, help = "download inline even if a daemon is running")]
+        inline: bool,
     },
     Config {
         #[command(subcommand)]
@@ -74,6 +83,10 @@ enum Command {
     Redo {
         #[arg(value_name = "ID|URL")]
         id_or_url: String,
+    },
+    Daemon {
+        #[arg(long, help = "extra verbose logging for the daemon startup sequence")]
+        verbose: bool,
     },
 }
 
@@ -131,11 +144,37 @@ async fn main() -> anyhow::Result<()> {
             max_attempts,
             eyecandy,
             color,
+            via_daemon,
+            inline,
         } => {
             let url = match url {
                 Some(url) => url,
                 None => clipboard_url()?,
             };
+            if !inline {
+                let dest = output
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().into_owned());
+                let conn = connections.map(|value| value as u32);
+                match daemon::attach_download(&url, dest.as_deref(), conn).await? {
+                    daemon::Attach::Started(id) => {
+                        println!("started {id} in the daemon");
+                        println!("  watch via: shard status {id}");
+                        return Ok(());
+                    }
+                    daemon::Attach::Unreachable if !via_daemon => {
+                        eprintln!(
+                            "shard: no daemon running, downloading inline (use --daemon to force)"
+                        );
+                    }
+                    daemon::Attach::Unreachable => {
+                        anyhow::bail!(
+                            "daemon requested (--daemon) but not listening on {}",
+                            daemon::control_socket_path().display()
+                        );
+                    }
+                }
+            }
             let style = resolve_style(eyecandy, color.map(Into::into))?;
             let conf = config::Config::load()?;
             let (dest_path, routing) = if let Some(output) = output {
@@ -187,6 +226,10 @@ async fn main() -> anyhow::Result<()> {
         Command::Resume { id } => resume_cli(&id).await?,
         Command::History => history_cli()?,
         Command::Redo { id_or_url } => redo_cli(&id_or_url).await?,
+        Command::Daemon { verbose } => {
+            let _ = verbose;
+            daemon::run().await?;
+        }
     }
     Ok(())
 }
