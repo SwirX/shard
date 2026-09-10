@@ -6,6 +6,8 @@
 
 use shard_rpc::{Request, Response, ServerEvent};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 /// Name of the daemon's control socket (kept in sync with `shard-daemon`).
 pub const SOCKET_NAME: &str = "control.sock";
@@ -27,6 +29,28 @@ impl Client {
         Ok(Self {
             inner: shard_socket::Client::connect(path).await?,
         })
+    }
+
+    /// Like [`Self::connect`], but if nothing is listening a daemon is
+    /// spawned (override with `$SHARD_DAEMON`) and the socket is polled
+    /// until it answers or the timeout elapses.
+    pub async fn connect_auto() -> std::io::Result<Self> {
+        if let Ok(client) = Self::connect().await {
+            return Ok(client);
+        }
+        spawn_daemon();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            match Self::connect().await {
+                Ok(client) => return Ok(client),
+                Err(_) if std::time::Instant::now() >= deadline => {
+                    return Err(std::io::Error::other(
+                        "shard daemon did not come up within 5s",
+                    ));
+                }
+                Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+            }
+        }
     }
 
     /// Send one request and read the daemon's reply.
@@ -59,4 +83,30 @@ pub fn data_dir() -> PathBuf {
         })
         .unwrap_or_default();
     base.join("shard")
+}
+
+/// Launch `shard daemon` detached. Best effort: the caller polls the socket
+/// afterwards, so a failed spawn simply ends up timing out.
+fn spawn_daemon() {
+    let _ = Command::new(daemon_binary())
+        .arg("daemon")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+}
+
+/// Where to find the daemon binary: `$SHARD_DAEMON`, then a `shard` sibling
+/// of the current executable, then `shard` on `$PATH`.
+fn daemon_binary() -> PathBuf {
+    if let Some(path) = std::env::var_os("SHARD_DAEMON") {
+        return PathBuf::from(path);
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(sibling) = exe.parent().map(|dir| dir.join("shard"))
+        && sibling.exists()
+    {
+        return sibling;
+    }
+    PathBuf::from("shard")
 }

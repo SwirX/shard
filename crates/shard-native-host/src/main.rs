@@ -58,7 +58,7 @@ fn relay_request(
     frames_tx: &mpsc::Sender<Vec<u8>>,
 ) -> io::Result<()> {
     let response = runtime.block_on(async {
-        let mut client = match Client::connect().await {
+        let mut client = match Client::connect_auto().await {
             Ok(client) => client,
             Err(err) => {
                 return shard_rpc::Response::Error {
@@ -86,7 +86,7 @@ fn relay_watch(
     frames_tx: &mpsc::Sender<Vec<u8>>,
 ) -> io::Result<()> {
     runtime.block_on(async {
-        let mut client = match Client::connect().await {
+        let mut client = match Client::connect_auto().await {
             Ok(client) => client,
             Err(_) => {
                 let event = ServerEvent::Snapshot {
